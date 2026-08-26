@@ -43,15 +43,15 @@ interface WeatherLook {
 }
 
 const LOOKS: WeatherLook[] = [
-  // Clear: long sightlines, harsh directional shadows.
+  // Clear: long sightlines, harsh directional shadows, warm and well-lit.
   {
-    fog: 0xa8b4bd, fogNear: 40, fogFar: 190, ambient: 0x8ea0ad, ambientIntensity: 0.85,
-    sun: 0xfff2e0, sunIntensity: 1.5, ground: 0x9aa3aa, rain: false,
+    fog: 0xb8c2c8, fogNear: 50, fogFar: 210, ambient: 0xa8b6c0, ambientIntensity: 1.05,
+    sun: 0xffe8c8, sunIntensity: 1.8, ground: 0xa8b0b6, rain: false,
   },
-  // Rain: visibility falls off past 45 m, everything goes flat and cold.
+  // Rain: visibility falls off past 45 m, flat and cold but still readable.
   {
-    fog: 0x5a6570, fogNear: 8, fogFar: 52, ambient: 0x6f7d88, ambientIntensity: 0.7,
-    sun: 0xc8d4de, sunIntensity: 0.5, ground: 0x545d64, rain: true,
+    fog: 0x66727e, fogNear: 10, fogFar: 56, ambient: 0x8494a2, ambientIntensity: 0.9,
+    sun: 0xc8d4de, sunIntensity: 0.6, ground: 0x5e6870, rain: true,
   },
   // Night: about 30 m of usable sight, and your muzzle flash is a flare.
   // Dark enough that ambush beats aim, light enough that geometry still reads
@@ -81,6 +81,14 @@ export class Renderer {
   private shimmerGroup = new THREE.Group();
   private cinderGroup = new THREE.Group();
   private propGroup = new THREE.Group();
+  /** Horizon scenery: ocean, sunset, black hole, stars. Weather-dependent. */
+  private vistaGroup = new THREE.Group();
+  /** Trees and rocks beyond the walls. Map-dependent. */
+  private sceneryGroup = new THREE.Group();
+  /** Night-only neon strips and their lights. */
+  private neonGroup = new THREE.Group();
+  /** Half-extent of the current map's footprint, from its brushes. */
+  private mapExtent = { x: 20, z: 28 };
   private weather = 0;
   private weapon = 0;
   private blackout = false;
@@ -99,16 +107,16 @@ export class Renderer {
       // stays on the canvas if the buffer survives compositing.
       preserveDrawingBuffer: true,
     });
-    // Deliberately low internal resolution, upscaled with nearest-neighbour
-    // CSS: the pixelated look is the style, and it is also what keeps the
-    // tone mapping and shadow passes cheap on integrated graphics.
-    this.renderer.setPixelRatio(1);
+    // Full-resolution rendering, pixel ratio capped so integrated graphics
+    // still holds 60 fps on a retina display.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.2;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.camera = new THREE.PerspectiveCamera(95, 1, 0.05, 300);
+    this.camera = new THREE.PerspectiveCamera(95, 1, 0.05, 1500);
     this.scene.add(this.mapGroup, this.shimmerGroup, this.cinderGroup, this.propGroup);
+    this.scene.add(this.vistaGroup, this.sceneryGroup, this.neonGroup);
 
     this.ambient = new THREE.HemisphereLight(0x8ea0ad, 0x2b3138, 0.9);
     this.sun = new THREE.DirectionalLight(0xfff2e0, 1.4);
@@ -134,10 +142,7 @@ export class Renderer {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    // Render at a fixed 400-line internal height; CSS stretches the canvas
-    // to the window with image-rendering: pixelated.
-    const scale = Math.min(1, 400 / h);
-    this.renderer.setSize(Math.round(w * scale), Math.round(h * scale), false);
+    this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -173,6 +178,80 @@ export class Renderer {
       this.sun.intensity = look.sunIntensity;
     }
     if (this.rain) this.rain.visible = look.rain && !this.blackout;
+    this.neonGroup.visible = this.weather === 2 && !this.blackout;
+    this.buildVista();
+  }
+
+  /**
+   * The world past the walls. Day looks west onto a sunset over open ocean;
+   * Night hangs a black hole on the +X horizon — the same direction the
+   * simulation's gentle pull drags everyone toward. All of it is fog-exempt
+   * so it reads at any weather, and none of it is reachable.
+   */
+  private buildVista() {
+    this.vistaGroup.clear();
+    const flat = (color: number, opacity = 1) =>
+      new THREE.MeshBasicMaterial({
+        color,
+        fog: false,
+        transparent: opacity < 1,
+        opacity,
+        depthWrite: false,
+      });
+
+    // Ocean: an enormous disc just below floor level, out to the horizon.
+    const oceanColor = this.weather === 2 ? 0x060a12 : this.weather === 1 ? 0x24404e : 0x2a5a78;
+    const ocean = new THREE.Mesh(new THREE.CircleGeometry(1200, 40), flat(oceanColor));
+    ocean.rotation.x = -Math.PI / 2;
+    ocean.position.y = -0.8;
+    this.vistaGroup.add(ocean);
+
+    if (this.weather !== 2) {
+      // Sunset in the -X sky: the sun, its glow, and a light path on the sea.
+      const sun = new THREE.Mesh(new THREE.CircleGeometry(56, 32), flat(0xffb04a));
+      sun.position.set(-950, 260, 0);
+      sun.lookAt(0, 260, 0);
+      const glow = new THREE.Mesh(new THREE.CircleGeometry(150, 32), flat(0xff7a3a, 0.35));
+      glow.position.set(-955, 250, 0);
+      glow.lookAt(0, 250, 0);
+      const path = new THREE.Mesh(new THREE.PlaneGeometry(700, 24), flat(0xff9a50, 0.25));
+      path.rotation.x = -Math.PI / 2;
+      path.rotation.z = Math.PI / 2;
+      path.position.set(-500, -0.7, 0);
+      this.vistaGroup.add(sun, glow, path);
+    } else {
+      // Black hole low on the +X horizon: a void disc, a hot accretion ring,
+      // a faint outer lens, and a sky of stars.
+      const hole = new THREE.Mesh(new THREE.CircleGeometry(64, 40), flat(0x000000));
+      hole.position.set(950, 280, 0);
+      hole.lookAt(0, 280, 0);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(64, 82, 48), flat(0xffc890, 0.95));
+      ring.position.set(948, 280, 0);
+      ring.lookAt(0, 280, 0);
+      const lens = new THREE.Mesh(new THREE.RingGeometry(82, 130, 48), flat(0x7cc4ff, 0.2));
+      lens.position.set(946, 280, 0);
+      lens.lookAt(0, 280, 0);
+      this.vistaGroup.add(hole, ring, lens);
+
+      const starCount = 400;
+      const pos = new Float32Array(starCount * 3);
+      for (let i = 0; i < starCount; i++) {
+        // Deterministic scatter on the upper hemisphere.
+        const a = (i * 2.399963) % (Math.PI * 2);
+        const r = 700 + ((i * 97) % 400);
+        const y = 60 + ((i * 53) % 500);
+        pos[i * 3] = Math.cos(a) * r;
+        pos[i * 3 + 1] = y;
+        pos[i * 3 + 2] = Math.sin(a) * r;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      const stars = new THREE.Points(
+        geo,
+        new THREE.PointsMaterial({ color: 0xcfd8e6, size: 2.2, fog: false, sizeAttenuation: false }),
+      );
+      this.vistaGroup.add(stars);
+    }
   }
 
   /** Build the level out of the collision brushes the shared sim handed us. */
@@ -183,6 +262,9 @@ export class Renderer {
     const solidMat = new THREE.MeshLambertMaterial({ color: 0x9aa3aa });
     const floorMat = new THREE.MeshLambertMaterial({ color: look.ground });
     const thinMat = new THREE.MeshLambertMaterial({ color: 0xb2895e });
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4a32 });
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x7d8188 });
+    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x4a7a4e });
     const glassMat = new THREE.MeshLambertMaterial({
       color: 0xbfe4ea,
       transparent: true,
@@ -190,13 +272,33 @@ export class Renderer {
       depthWrite: false,
     });
 
+    let ex = 10;
+    let ez = 10;
     for (const b of brushes) {
       const sx = b.max[0] - b.min[0];
       const sy = b.max[1] - b.min[1];
       const sz = b.max[2] - b.min[2];
+      ex = Math.max(ex, Math.abs(b.min[0]), Math.abs(b.max[0]));
+      ez = Math.max(ez, Math.abs(b.min[2]), Math.abs(b.max[2]));
       const geo = new THREE.BoxGeometry(sx, sy, sz);
       const isFloor = sy > 1.5 && b.max[1] <= 0.05;
-      const mat = b.glass ? glassMat : b.thin ? thinMat : isFloor ? floorMat : solidMat;
+      // Dress collision boxes by their shape: slim tall boxes are tree
+      // trunks (and get a canopy), squat boxes hugging the ground are rocks.
+      const isTrunk = !b.thin && !b.glass && sx <= 0.8 && sz <= 0.8 && sy >= 1.8;
+      const isRock =
+        !b.thin && !b.glass && !isFloor && b.min[1] <= 0.05 && sy <= 1.2 &&
+        sx >= 1.6 && sx <= 4.2 && sz >= 1.6 && sz <= 4.2;
+      const mat = b.glass
+        ? glassMat
+        : b.thin
+        ? thinMat
+        : isTrunk
+        ? trunkMat
+        : isRock
+        ? rockMat
+        : isFloor
+        ? floorMat
+        : solidMat;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(
         (b.min[0] + b.max[0]) / 2,
@@ -209,9 +311,19 @@ export class Renderer {
       }
       this.mapGroup.add(mesh);
 
+      if (isTrunk) {
+        // Purely visual canopy above head height: bullets and eyes pass the
+        // simulation's checks unchanged, the silhouette just reads as a tree.
+        const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 7), canopyMat);
+        canopy.position.set(mesh.position.x, b.max[1] + 1.0, mesh.position.z);
+        canopy.castShadow = true;
+        this.mapGroup.add(canopy);
+        continue;
+      }
+
       // A thin dark cap on every solid, so edges read at distance without
       // paying for an outline pass.
-      if (!b.glass && !isFloor && sy > 0.3) {
+      if (!b.glass && !isFloor && !isRock && sy > 0.3) {
         const cap = new THREE.Mesh(
           new THREE.BoxGeometry(sx * 1.005, 0.06, sz * 1.005),
           new THREE.MeshBasicMaterial({ color: 0x2b3138 }),
@@ -220,9 +332,79 @@ export class Renderer {
         this.mapGroup.add(cap);
       }
     }
+    this.mapExtent = { x: ex, z: ez };
 
+    this.buildScenery();
+    this.buildNeon();
     this.buildRain();
     this.setWeather(weather);
+  }
+
+  /**
+   * Tall trees and rock piles in a ring beyond the boundary walls — visible
+   * over the wall line, never reachable, and deterministic per map size.
+   */
+  private buildScenery() {
+    this.sceneryGroup.clear();
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5d4028 });
+    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x3e6b44 });
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x6c7076 });
+    const ring = Math.max(this.mapExtent.x, this.mapExtent.z);
+    for (let i = 0; i < 26; i++) {
+      const a = i * 0.483 * Math.PI;
+      const r = ring + 7 + ((i * 37) % 20);
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      if (i % 3 === 2) {
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.2 + (i % 4) * 0.7), rockMat);
+        rock.position.set(x, 1.0, z);
+        rock.rotation.set(i * 0.7, i * 1.3, 0);
+        this.sceneryGroup.add(rock);
+      } else {
+        const h = 8 + ((i * 53) % 7);
+        const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.8, h, 0.8), trunkMat);
+        trunk.position.set(x, h / 2, z);
+        const canopy = new THREE.Mesh(new THREE.ConeGeometry(3.2, 6.0, 7), canopyMat);
+        canopy.position.set(x, h + 2.4, z);
+        this.sceneryGroup.add(trunk, canopy);
+      }
+    }
+  }
+
+  /**
+   * Night neon: emissive strips along the boundary walls plus a handful of
+   * real point lights, so Night stays moody but never unreadable.
+   */
+  private buildNeon() {
+    this.neonGroup.clear();
+    const { x: ex, z: ez } = this.mapExtent;
+    const colors = [0x2fe0d0, 0xff4fd8, 0xffb02e, 0x7c9dff];
+    const stripY = 3.4;
+    const strips: { x: number; z: number; alongX: boolean }[] = [
+      { x: 0, z: -ez + 0.35, alongX: true },
+      { x: 0, z: ez - 0.35, alongX: true },
+      { x: -ex + 0.35, z: 0, alongX: false },
+      { x: ex - 0.35, z: 0, alongX: false },
+    ];
+    strips.forEach((s, i) => {
+      const len = (s.alongX ? ex : ez) * 1.5;
+      const geo = s.alongX
+        ? new THREE.BoxGeometry(len, 0.16, 0.1)
+        : new THREE.BoxGeometry(0.1, 0.16, len);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshBasicMaterial({ color: colors[i % colors.length] }),
+      );
+      mesh.position.set(s.x, stripY, s.z);
+      this.neonGroup.add(mesh);
+      const light = new THREE.PointLight(colors[i % colors.length], 2.6, 26, 1.6);
+      light.position.set(s.x * 0.9, stripY + 0.5, s.z * 0.9);
+      this.neonGroup.add(light);
+    });
+    // One warm lamp over the middle of the map.
+    const centre = new THREE.PointLight(0xffd9a0, 2.2, 30, 1.5);
+    centre.position.set(0, 6.0, 0);
+    this.neonGroup.add(centre);
   }
 
   private buildRain() {

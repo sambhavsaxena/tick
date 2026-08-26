@@ -118,6 +118,7 @@ pub fn step_movement(
     speed_mult: f32,
     gravity_mult: f32,
     can_sprint: bool,
+    pull: Vec3,
 ) {
     let want_crouch = input.held(buttons::CROUCH);
     if !want_crouch && st.crouching {
@@ -191,6 +192,12 @@ pub fn step_movement(
         st.vel.y = JUMP_SPEED;
         st.on_ground = false;
     }
+
+    // Environmental pull (the Night sky's black hole): a constant gentle
+    // acceleration, shared with the client's prediction through this same
+    // function so it can never cause a reconciliation fight.
+    st.vel.x += pull.x * DT;
+    st.vel.z += pull.z * DT;
 
     st.vel.y -= GRAVITY * gravity_mult * DT;
     if st.vel.y < -60.0 {

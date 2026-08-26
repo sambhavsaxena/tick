@@ -25,7 +25,7 @@ export class Net {
   onSnapshot: SnapHandler = () => {};
   onClose: () => void = () => {};
 
-  connect(name: string) {
+  connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const url = `${proto}://${location.host}/ws`;
     const ws = new WebSocket(url);
@@ -34,7 +34,7 @@ export class Net {
 
     ws.onopen = () => {
       this.connected = true;
-      this.send({ t: "hello", name });
+      this.send({ t: "hello" });
       this.pingTimer = window.setInterval(() => this.ping(), 1000);
       this.ping();
     };

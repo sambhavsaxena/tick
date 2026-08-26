@@ -49,7 +49,6 @@ const results = document.getElementById("results") as HTMLElement;
 const standby = document.getElementById("standby") as HTMLElement;
 const playButton = document.getElementById("playButton") as HTMLButtonElement;
 const againButton = document.getElementById("againButton") as HTMLButtonElement;
-const nameInput = document.getElementById("nameInput") as HTMLInputElement;
 const queueState = document.getElementById("queueState") as HTMLElement;
 
 const renderer = new Renderer(canvas);
@@ -86,8 +85,6 @@ let isDead = false;
 let lastImpact: { p: number[]; at: number } | null = null;
 const counters = { frames: 0, matchFrames: 0, steps: 0, sent: 0 };
 
-nameInput.value = localStorage.getItem("tick.name") ?? "";
-
 // ---------------------------------------------------------------- lifecycle
 
 async function boot() {
@@ -98,15 +95,12 @@ async function boot() {
     queueState.textContent = "Disconnected. Reload to reconnect.";
     setPhase("lobby");
   };
-  net.connect(nameInput.value || "Player");
+  net.connect();
   requestAnimationFrame(frame);
 }
 
 playButton.addEventListener("click", () => {
   audio.start();
-  const name = nameInput.value.trim() || "Player";
-  localStorage.setItem("tick.name", name);
-  net.send({ t: "hello", name });
   net.send({ t: "play" });
   setPhase("queued");
   queueState.textContent = "Finding a match…";
@@ -244,6 +238,11 @@ function leaveStandby() {
 
 function onJson(msg: any) {
   switch (msg.t) {
+    case "welcome": {
+      const note = document.getElementById("callsignNote");
+      if (note) note.textContent = `Callsign · ${msg.name}`;
+      break;
+    }
     case "queued":
       queueState.textContent =
         msg.position > 1 ? `In queue · ${msg.position} waiting` : "Finding a match…";
@@ -449,6 +448,8 @@ function reconcile(snap: Snapshot) {
       speedMultiplier(),
       gravityMultiplier(),
       canSprint(),
+      pullX(),
+      0,
     );
   }
   const after = sim.pos;
@@ -478,6 +479,11 @@ function gravityMultiplier(): number {
 function canSprint(): boolean {
   const me = latest?.players.find((p) => p.slot === mySlot);
   return !me?.staggered && !me?.carrying;
+}
+
+/** Night's black hole drags everyone toward +X. Mirrors the server exactly. */
+function pullX(): number {
+  return currentWeather === 2 ? 2.5 : 0;
 }
 
 function interpDelayMs(): number {
@@ -562,7 +568,7 @@ function stepLocal() {
   };
   pending.push(cmd);
   if (pending.length > 64) pending.shift();
-  sim.step(cmd.buttons, cmd.yaw, cmd.pitch, speedMultiplier(), gravityMultiplier(), canSprint());
+  sim.step(cmd.buttons, cmd.yaw, cmd.pitch, speedMultiplier(), gravityMultiplier(), canSprint(), pullX(), 0);
   // Report our own interpolation width so the server rewinds by exactly the
   // amount we are actually rendering behind.
   const interpTicks = Math.round((net.rtt / 2 + interpDelayMs()) / TICK_MS);

@@ -17,6 +17,7 @@ export interface SimExports {
   step(
     buttons: number, yaw: number, pitch: number,
     speedMult: number, gravityMult: number, canSprint: number,
+    pullX: number, pullZ: number,
   ): void;
   memory: WebAssembly.Memory;
 }
@@ -72,8 +73,12 @@ export class Sim {
     this.ex.set_state(x, y, z, vx, vy, vz, onGround ? 1 : 0, crouching ? 1 : 0);
   }
 
-  step(buttons: number, yaw: number, pitch: number, speedMult: number, gravityMult: number, canSprint: boolean) {
-    this.ex.step(buttons, yaw, pitch, speedMult, gravityMult, canSprint ? 1 : 0);
+  step(
+    buttons: number, yaw: number, pitch: number,
+    speedMult: number, gravityMult: number, canSprint: boolean,
+    pullX = 0, pullZ = 0,
+  ) {
+    this.ex.step(buttons, yaw, pitch, speedMult, gravityMult, canSprint ? 1 : 0, pullX, pullZ);
   }
 
   get pos(): [number, number, number] {

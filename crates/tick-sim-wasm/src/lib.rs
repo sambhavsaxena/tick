@@ -98,6 +98,7 @@ pub extern "C" fn set_state(
 /// Advance the local player one 64 Hz tick. Called once per unacknowledged
 /// input during reconciliation, and once per new input during prediction.
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub extern "C" fn step(
     buttons: u32,
     yaw: f32,
@@ -105,6 +106,8 @@ pub extern "C" fn step(
     speed_mult: f32,
     gravity_mult: f32,
     can_sprint: u32,
+    pull_x: f32,
+    pull_z: f32,
 ) {
     let map = map_ref();
     unsafe {
@@ -128,6 +131,7 @@ pub extern "C" fn step(
             speed_mult,
             gravity_mult,
             can_sprint != 0,
+            v3(pull_x, 0.0, pull_z),
         );
         s[0] = mv.pos.x;
         s[1] = mv.pos.y;

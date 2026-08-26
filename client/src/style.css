@@ -432,10 +432,6 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
   .bonusRow { animation-duration: 0.01s; }
 }
 
-/* ------------------------------------------------------------ pixel look */
-
-#view { image-rendering: pixelated; }
-
 /* --------------------------------------------------------- damage numbers */
 
 .dmgNum {

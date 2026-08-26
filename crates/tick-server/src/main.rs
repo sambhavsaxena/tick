@@ -57,6 +57,25 @@ const BOT_NAMES: [&str; 12] = [
     "Nimbus", "Cassette", "Fathom",
 ];
 
+/// Callsign dictionary. The server assigns every human a random
+/// adjective-noun pair; the client no longer gets a say in its own name.
+const CALLSIGN_ADJECTIVES: [&str; 24] = [
+    "Crimson", "Silent", "Feral", "Gilded", "Hollow", "Lucid", "Molten", "Neon", "Oblique",
+    "Pale", "Quick", "Rusted", "Sable", "Tidal", "Umbral", "Vivid", "Wry", "Zealous",
+    "Arc", "Brisk", "Cobalt", "Drift", "Ember", "Frost",
+];
+const CALLSIGN_NOUNS: [&str; 24] = [
+    "Falcon", "Viper", "Lynx", "Heron", "Badger", "Mantis", "Osprey", "Jackal", "Raven",
+    "Puma", "Wren", "Moth", "Otter", "Kestrel", "Shark", "Ibis", "Fox", "Crane",
+    "Hornet", "Stoat", "Gull", "Adder", "Bison", "Swift",
+];
+
+fn random_callsign(rng: &mut Rng) -> String {
+    let a = CALLSIGN_ADJECTIVES[rng.next_u32(CALLSIGN_ADJECTIVES.len() as u32) as usize];
+    let n = CALLSIGN_NOUNS[rng.next_u32(CALLSIGN_NOUNS.len() as u32) as usize];
+    format!("{a} {n}")
+}
+
 fn now_seed() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -133,7 +152,7 @@ async fn connection(socket: WebSocket, hub: Arc<Hub>) {
     });
 
     let link: LinkCell = Arc::new(Mutex::new(None));
-    let mut name = format!("Player{id}");
+    let name = { random_callsign(&mut hub.rng.lock().unwrap()) };
 
     let _ = out_tx
         .send(ToClient::Json(
@@ -158,14 +177,9 @@ async fn connection(socket: WebSocket, hub: Arc<Hub>) {
                     Err(_) => continue,
                 };
                 match v.get("t").and_then(|t| t.as_str()).unwrap_or("") {
-                    "hello" => {
-                        if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
-                            let trimmed = n.trim();
-                            if !trimmed.is_empty() {
-                                name = trimmed.chars().take(16).collect();
-                            }
-                        }
-                    }
+                    // Callsigns are server-assigned; a client "hello" is now
+                    // just a greeting and any name in it is ignored.
+                    "hello" => {}
                     // Round-trip probe. The client turns this into the
                     // interpolation delay it reports with every input packet.
                     "ping" => {

@@ -647,6 +647,17 @@ impl World {
         }
     }
 
+    /// At Night a black hole hangs on the +X horizon and drags everyone
+    /// toward it, gently. The client predicts the same pull from the same
+    /// weather byte, so it never shows up as a correction.
+    fn environment_pull(&self) -> Vec3 {
+        if self.weather == Weather::Night {
+            v3(BLACK_HOLE_PULL, 0.0, 0.0)
+        } else {
+            Vec3::ZERO
+        }
+    }
+
     fn score_mult(&self) -> f32 {
         if self.event_active(StaticEvent::OvertimeCoin) {
             2.0
@@ -982,6 +993,7 @@ impl World {
                     speed,
                     gravity,
                     can_sprint,
+                    self.environment_pull(),
                 );
                 self.players[i].mv = mv;
             }
@@ -2168,6 +2180,39 @@ mod tests {
         w.players[0].health = MAX_HEALTH;
         w.resolve_melee(0);
         assert!(!w.players[1].alive, "a front Blade hit must kill");
+    }
+
+    #[test]
+    fn night_black_hole_drags_players_toward_plus_x() {
+        let mut night = World::new(MatchConfig {
+            mode: Mode::Skirmish,
+            map: MapId::Vault,
+            weather: Weather::Night,
+            seed: 11,
+        });
+        night.add_player(Player::new(0, 0, "a".into(), Character::Vane, Weapon::Sting));
+        for _ in 0..64 {
+            night.step();
+        }
+        assert!(
+            night.players[0].mv.vel.x > 0.15,
+            "an idle player must drift toward the black hole at Night"
+        );
+
+        let mut clear = World::new(MatchConfig {
+            mode: Mode::Skirmish,
+            map: MapId::Vault,
+            weather: Weather::Clear,
+            seed: 11,
+        });
+        clear.add_player(Player::new(0, 0, "a".into(), Character::Vane, Weapon::Sting));
+        for _ in 0..64 {
+            clear.step();
+        }
+        assert!(
+            clear.players[0].mv.vel.x.abs() < 0.01,
+            "no drift outside Night"
+        );
     }
 
     #[test]

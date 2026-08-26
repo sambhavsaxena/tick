@@ -37,6 +37,11 @@ pub const STEP_HEIGHT: f32 = 0.45;
 /// Sprint-to-fire delay, identical on every weapon.
 pub const SPRINT_FIRE_DELAY: f32 = 0.12;
 
+/// Horizontal acceleration toward the Night sky's black hole (+X horizon).
+/// Ground friction (9/s) caps the standing drift at PULL/9 ≈ 0.28 m/s —
+/// a lean, not a slide — while jumps drift visibly further toward it.
+pub const BLACK_HOLE_PULL: f32 = 2.5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Weapon {
@@ -532,6 +537,16 @@ pub fn load_map(id: MapId) -> MapData {
             // Thin partitions Arc can shoot through.
             b.push(thin(-9.5, 1.6, 0.0, 0.3, 1.6, 2.0));
             b.push(thin(9.5, 1.6, 0.0, 0.3, 1.6, 2.0));
+            // Vaultable mid-hall barrier: 0.9 m, cleared with one jump.
+            b.push(solid(0.0, 0.45, 0.0, 4.0, 0.45, 0.5));
+            // Crate stairways up to the catwalks mid-hall, mirrored on both
+            // sides and both ends: 0.9 / 1.8 / 2.7 tops, then a hop onto the
+            // 3.4 m deck. A new route that does not use the end ramps.
+            for (sx, sz) in [(-1.0f32, 1.0f32), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
+                b.push(solid(7.9 * sx, 0.45, 10.0 * sz, 0.7, 0.45, 0.7));
+                b.push(solid(7.9 * sx, 0.9, 11.6 * sz, 0.7, 0.9, 0.7));
+                b.push(solid(7.9 * sx, 1.35, 13.2 * sz, 0.7, 1.35, 0.7));
+            }
             MapData {
                 id,
                 brushes: b,
@@ -575,6 +590,19 @@ pub fn load_map(id: MapId) -> MapData {
             // Low walls around the flooded pit.
             b.push(solid(0.0, 0.35, -5.0, 5.0, 0.35, 0.4));
             b.push(solid(0.0, 0.35, 5.0, 5.0, 0.35, 0.4));
+            // Crate stairways up to the central gantry (1.0 / 2.1 / 3.2 tops,
+            // then a 1.0 m hop onto the 4.2 m walkway), mirrored through the
+            // origin to keep the diagonal symmetry.
+            for s in [1.0f32, -1.0] {
+                b.push(solid(3.0 * s, 0.5, 6.2 * s, 0.8, 0.5, 0.8));
+                b.push(solid(3.0 * s, 1.05, 4.6 * s, 0.8, 1.05, 0.8));
+                b.push(solid(3.0 * s, 1.6, 3.0 * s, 0.8, 1.6, 0.8));
+            }
+            // Boulders between the container rows: jumpable cover that reads
+            // as terrain rather than cargo.
+            for (bx, bz) in [(12.0f32, -4.0f32), (-12.0, 4.0), (4.0, 12.0), (-4.0, -12.0)] {
+                b.push(solid(bx, 0.45, bz, 1.1, 0.45, 1.3));
+            }
             MapData {
                 id,
                 brushes: b,
@@ -619,6 +647,25 @@ pub fn load_map(id: MapId) -> MapData {
             // Awning deck with a one-way drop onto the terrace.
             b.push(solid(9.0, 3.0, -16.0, 6.0, 0.2, 3.0));
             b.push(solid(14.0, 1.5, -19.0, 1.5, 1.5, 1.0));
+            // Crates that climb up to the awning deck: 1.0 then 2.1, then a
+            // 1.1 m hop onto the deck — a second way up besides the drop.
+            b.push(solid(3.5, 0.5, -16.0, 0.8, 0.5, 0.8));
+            b.push(solid(5.2, 1.05, -16.0, 0.8, 1.05, 0.8));
+            // Matching platform and crates on the B side so neither team owns
+            // the only high ground.
+            b.push(solid(9.0, 3.0, 16.0, 6.0, 0.2, 3.0));
+            b.push(solid(14.0, 1.5, 19.0, 1.5, 1.5, 1.0));
+            b.push(solid(3.5, 0.5, 16.0, 0.8, 0.5, 0.8));
+            b.push(solid(5.2, 1.05, 16.0, 0.8, 1.05, 0.8));
+            // Planters with trees: a solid jumpable base and a slim trunk the
+            // renderer dresses with a canopy. Real cover, natural silhouette.
+            for (px, pz) in [(-13.5f32, 7.0f32), (13.5, 7.0), (-13.5, -7.0), (13.5, -7.0)] {
+                b.push(solid(px, 0.35, pz, 0.9, 0.35, 0.9));
+                b.push(solid(px, 1.55, pz, 0.28, 1.2, 0.28));
+            }
+            // Hedge rows flanking the atrium: 0.75 m, vaultable.
+            b.push(solid(0.0, 0.375, -8.0, 2.6, 0.375, 0.5));
+            b.push(solid(0.0, 0.375, 8.0, 2.6, 0.375, 0.5));
             MapData {
                 id,
                 brushes: b,
@@ -663,6 +710,16 @@ pub fn load_map(id: MapId) -> MapData {
             // Shutters: thin so Arc can contest the deck through them.
             b.push(thin(-5.0, 4.6, 0.0, 0.2, 1.2, 5.0));
             b.push(thin(5.0, 4.6, 0.0, 0.2, 1.2, 5.0));
+            // Boulders along the open approach: jumpable tops, natural cover
+            // on an otherwise architectural map. Mirrored in z.
+            for (bx, bz) in [(5.0f32, 12.0f32), (-5.0, 12.0), (5.0, -12.0), (-5.0, -12.0)] {
+                b.push(solid(bx, 0.45, bz, 1.1, 0.45, 1.3));
+            }
+            // Bigger rocks near the corners: full hides you can also mantle
+            // from the low boulder side (1.1 m tops).
+            for (bx, bz) in [(13.5f32, 18.0f32), (-13.5, 18.0), (13.5, -18.0), (-13.5, -18.0)] {
+                b.push(solid(bx, 0.55, bz, 1.6, 0.55, 1.2));
+            }
             MapData {
                 id,
                 brushes: b,
