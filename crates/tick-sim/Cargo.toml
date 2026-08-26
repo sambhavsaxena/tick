@@ -1,0 +1,8 @@
+[package]
+name = "tick-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libm = "0.2"

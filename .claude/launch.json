@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tick",
+      "runtimeExecutable": "./run.sh",
+      "runtimeArgs": [],
+      "port": 8080
+    }
+  ]
+}

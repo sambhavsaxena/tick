@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>TICK</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+
+    <!-- In-match HUD -->
+    <div id="hud" class="hidden">
+      <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
+      <div id="hitmarker"></div>
+
+      <header id="scorebar">
+        <div class="side a"><span class="label">ALPHA</span><span id="scoreA">0</span></div>
+        <div class="mid">
+          <div id="clock">4:00</div>
+          <div id="modeName">Skirmish</div>
+        </div>
+        <div class="side b"><span id="scoreB">0</span><span class="label">BRAVO</span></div>
+      </header>
+
+      <div id="eventBanner" class="hidden">
+        <span id="eventName"></span>
+        <span id="eventBlurb"></span>
+      </div>
+
+      <div id="killfeed"></div>
+      <div id="bonuses"></div>
+
+      <footer id="statusbar">
+        <div class="block vitals">
+          <div class="bars">
+            <div class="bar health"><i id="healthFill"></i></div>
+            <div class="bar armor"><i id="armorFill"></i></div>
+          </div>
+          <div class="readout"><span id="healthNum">100</span><small id="armorNum"></small></div>
+        </div>
+        <div class="block kit">
+          <div id="charName">Vane</div>
+          <div id="abilityState">Blink ready</div>
+        </div>
+        <div class="block charge">
+          <div class="meter"><i id="chargeFill"></i></div>
+          <div class="cap">Precision Charge</div>
+        </div>
+        <div class="block ammo">
+          <div id="ammoNum">30</div>
+          <div id="weaponName">Sting</div>
+        </div>
+      </footer>
+
+      <div id="netreadout"></div>
+      <div id="deadNotice" class="hidden">Respawning</div>
+    </div>
+
+    <!-- Lobby -->
+    <div id="lobby">
+      <div class="lobbyInner">
+        <h1>TICK</h1>
+        <p class="tagline">
+          Four minutes. The server picks your character, your gun, the map and the weather.
+          Everything else is aim.
+        </p>
+        <div class="nameRow">
+          <label for="nameInput">Callsign</label>
+          <input id="nameInput" maxlength="16" autocomplete="off" spellcheck="false" />
+        </div>
+        <button id="playButton">Play</button>
+        <div id="queueState"></div>
+        <ul class="controls">
+          <li><b>WASD</b> move</li>
+          <li><b>Shift</b> sprint</li>
+          <li><b>Space</b> jump</li>
+          <li><b>Ctrl</b> crouch</li>
+          <li><b>Mouse 1</b> fire</li>
+          <li><b>Mouse 2</b> aim</li>
+          <li><b>Q</b> ability</li>
+          <li><b>Aim + Q</b> spend Focus</li>
+          <li><b>R</b> reload</li>
+          <li><b>V</b> melee</li>
+          <li><b>Esc Esc</b> standby</li>
+        </ul>
+        <p class="footnote">Body kill 100. Clean long-range headshot 325. That ratio is the game.</p>
+      </div>
+    </div>
+
+    <!-- Two second spawn card -->
+    <div id="spawnCard" class="hidden">
+      <div class="draft">
+        <span id="draftChar"></span><em>·</em><span id="draftWeapon"></span><em>·</em>
+        <span id="draftMap"></span><em>·</em><span id="draftWeather"></span>
+      </div>
+      <div id="draftMode"></div>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden">
+      <div class="resultsInner">
+        <div id="outcome">Match over</div>
+        <div class="arBlock">
+          <div class="arNumber" id="arNumber">0</div>
+          <div class="arLabel">Aim Rating<span id="arDelta"></span></div>
+        </div>
+        <div id="bestKill"></div>
+        <table id="scoreTable"></table>
+        <button id="againButton">Again <span id="againTimer"></span></button>
+      </div>
+    </div>
+
+    <!-- Standby -->
+    <div id="standby" class="hidden">
+      <div class="standbyInner">
+        <div class="spinner"></div>
+        <p>Standby</p>
+        <small>Click to return. A bot takes over after 12 seconds.</small>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

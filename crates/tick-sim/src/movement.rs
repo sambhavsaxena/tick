@@ -1,0 +1,228 @@
+//! Movement and collision.
+//!
+//! This module is the reason the simulation is a separate crate: the server
+//! calls it inside the authoritative tick, and the browser calls the exact
+//! same compiled code through WebAssembly to predict the local player. There
+//! is no second implementation to drift out of sync.
+
+use crate::defs::*;
+use crate::math::*;
+
+pub mod buttons {
+    pub const FWD: u16 = 1 << 0;
+    pub const BACK: u16 = 1 << 1;
+    pub const LEFT: u16 = 1 << 2;
+    pub const RIGHT: u16 = 1 << 3;
+    pub const JUMP: u16 = 1 << 4;
+    pub const CROUCH: u16 = 1 << 5;
+    pub const FIRE: u16 = 1 << 6;
+    pub const ADS: u16 = 1 << 7;
+    pub const ABILITY: u16 = 1 << 8;
+    pub const RELOAD: u16 = 1 << 9;
+    pub const SPRINT: u16 = 1 << 10;
+    pub const MELEE: u16 = 1 << 11;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Input {
+    pub seq: u32,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub buttons: u16,
+}
+
+impl Input {
+    pub fn held(&self, b: u16) -> bool {
+        self.buttons & b != 0
+    }
+}
+
+/// The slice of player state that movement touches.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MoveState {
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub on_ground: bool,
+    pub crouching: bool,
+}
+
+pub fn player_box(pos: Vec3, crouching: bool) -> Aabb {
+    let h = if crouching {
+        PLAYER_CROUCH_HEIGHT
+    } else {
+        PLAYER_HEIGHT
+    };
+    Aabb {
+        min: v3(pos.x - PLAYER_RADIUS, pos.y, pos.z - PLAYER_RADIUS),
+        max: v3(pos.x + PLAYER_RADIUS, pos.y + h, pos.z + PLAYER_RADIUS),
+    }
+}
+
+fn blocked(pos: Vec3, crouching: bool, brushes: &[Brush]) -> bool {
+    let b = player_box(pos, crouching);
+    brushes.iter().any(|s| s.aabb.overlaps(&b))
+}
+
+/// Move one axis at a time and stop at the first blocking brush. Splitting the
+/// axes is what produces sliding along walls instead of sticking to them.
+fn move_axis(st: &mut MoveState, delta: Vec3, brushes: &[Brush]) -> (bool, bool) {
+    let mut hit_wall = false;
+    let mut hit_floor = false;
+
+    let try_axis = |st: &mut MoveState, d: Vec3| -> bool {
+        let next = st.pos.add(d);
+        if blocked(next, st.crouching, brushes) {
+            false
+        } else {
+            st.pos = next;
+            true
+        }
+    };
+
+    if delta.x != 0.0 && !try_axis(st, v3(delta.x, 0.0, 0.0)) {
+        // Try to step over a low obstacle before giving up on the axis.
+        let lifted = st.pos.add(v3(delta.x, STEP_HEIGHT, 0.0));
+        if st.on_ground && !blocked(lifted, st.crouching, brushes) {
+            st.pos = lifted;
+        } else {
+            st.vel.x = 0.0;
+            hit_wall = true;
+        }
+    }
+    if delta.z != 0.0 && !try_axis(st, v3(0.0, 0.0, delta.z)) {
+        let lifted = st.pos.add(v3(0.0, STEP_HEIGHT, delta.z));
+        if st.on_ground && !blocked(lifted, st.crouching, brushes) {
+            st.pos = lifted;
+        } else {
+            st.vel.z = 0.0;
+            hit_wall = true;
+        }
+    }
+    if delta.y != 0.0 && !try_axis(st, v3(0.0, delta.y, 0.0)) {
+        if delta.y < 0.0 {
+            hit_floor = true;
+        }
+        st.vel.y = 0.0;
+    }
+    (hit_wall, hit_floor)
+}
+
+/// Advance one player by one 64 Hz tick.
+///
+/// `speed_mult` folds in the character passive and any staggered penalty;
+/// `gravity_mult` is how the Gravity Dip event reaches the simulation.
+pub fn step_movement(
+    st: &mut MoveState,
+    input: &Input,
+    brushes: &[Brush],
+    speed_mult: f32,
+    gravity_mult: f32,
+    can_sprint: bool,
+) {
+    let want_crouch = input.held(buttons::CROUCH);
+    if !want_crouch && st.crouching {
+        // Only stand up when there is room to.
+        if !blocked(st.pos, false, brushes) {
+            st.crouching = false;
+        }
+    } else {
+        st.crouching = want_crouch;
+    }
+
+    let mut wish = Vec3::ZERO;
+    let fwd = v3(sin(input.yaw), 0.0, cos(input.yaw));
+    // right = fwd x up, so RIGHT strafes toward the camera's screen-right.
+    let right = v3(-fwd.z, 0.0, fwd.x);
+    if input.held(buttons::FWD) {
+        wish = wish.add(fwd);
+    }
+    if input.held(buttons::BACK) {
+        wish = wish.sub(fwd);
+    }
+    if input.held(buttons::RIGHT) {
+        wish = wish.add(right);
+    }
+    if input.held(buttons::LEFT) {
+        wish = wish.sub(right);
+    }
+    wish = wish.normalized();
+
+    let sprinting = can_sprint
+        && input.held(buttons::SPRINT)
+        && input.held(buttons::FWD)
+        && !st.crouching
+        && !input.held(buttons::ADS);
+
+    let target_speed = if st.crouching {
+        CROUCH_SPEED
+    } else if sprinting {
+        SPRINT_SPEED
+    } else {
+        WALK_SPEED
+    } * speed_mult;
+
+    // Ground friction, applied to the horizontal component only.
+    if st.on_ground {
+        let speed = st.vel.len_xz();
+        if speed > 0.0 {
+            let drop = speed * FRICTION * DT;
+            let scale = if speed - drop < 0.0 {
+                0.0
+            } else {
+                (speed - drop) / speed
+            };
+            st.vel.x *= scale;
+            st.vel.z *= scale;
+        }
+    }
+
+    // Quake-style acceleration: only accelerate up to the wish speed along the
+    // wish direction, which is what makes air control feel correct.
+    let accel = if st.on_ground { GROUND_ACCEL } else { AIR_ACCEL };
+    let current = st.vel.x * wish.x + st.vel.z * wish.z;
+    let add = target_speed - current;
+    if add > 0.0 {
+        let step = clamp(accel * DT * target_speed, 0.0, add);
+        st.vel.x += wish.x * step;
+        st.vel.z += wish.z * step;
+    }
+
+    if st.on_ground && input.held(buttons::JUMP) {
+        st.vel.y = JUMP_SPEED;
+        st.on_ground = false;
+    }
+
+    st.vel.y -= GRAVITY * gravity_mult * DT;
+    if st.vel.y < -60.0 {
+        st.vel.y = -60.0;
+    }
+
+    let delta = st.vel.scale(DT);
+    let (_, hit_floor) = move_axis(st, delta, brushes);
+
+    // Ground check: probe a hair below the feet.
+    let probe = st.pos.add(v3(0.0, -0.03, 0.0));
+    st.on_ground = hit_floor || blocked(probe, st.crouching, brushes);
+    if st.on_ground && st.vel.y < 0.0 {
+        st.vel.y = 0.0;
+    }
+}
+
+/// Cast a ray against level geometry. Returns the distance to the nearest
+/// brush, and whether the first thing hit was thin cover.
+///
+/// Glass is marked thin, so a shot through the atrium reaches the far side at
+/// half damage while still stopping a player from walking through the window.
+pub fn trace_world(origin: Vec3, dir: Vec3, max_t: f32, brushes: &[Brush]) -> (f32, bool) {
+    let mut best = max_t;
+    let mut best_thin = false;
+    for b in brushes {
+        if let Some(t) = b.aabb.ray(origin, dir, max_t) {
+            if t < best {
+                best = t;
+                best_thin = b.thin;
+            }
+        }
+    }
+    (best, best_thin)
+}
