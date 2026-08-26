@@ -97,15 +97,50 @@ let respawnAt = 0;
 let prevButtons = 0;
 /** Who killed us last, for the death screen's portrait. */
 let lastKiller: { slot: number; weapon: number; headshot: boolean } | null = null;
+/**
+ * The slot whose eyes we are watching through while dead, from the server.
+ * 255 means nobody — a death with no killer, or a killer whose whole chain is
+ * dead — and the camera stays where we fell.
+ */
+let spectating = 255;
+/** Smoothed killcam eye, so the cut to the killer's view is not a jolt. */
+let specEye: [number, number, number] | null = null;
 /** Respawn delay per mode, mirroring Mode::respawn_delay in the sim. */
 const RESPAWN_DELAY = [3, 2, 4, Infinity];
+/** This match's length, so elapsed time can be derived from the clock. */
+let matchDuration = 240;
 /** Where our last landed shot hit, for anchoring damage numbers. */
 let lastImpact: { p: number[]; at: number } | null = null;
 const counters = { frames: 0, matchFrames: 0, steps: 0, sent: 0 };
 
 // ---------------------------------------------------------------- lifecycle
 
+/**
+ * Whether this is a phone or a tablet.
+ *
+ * Two independent signals, because neither is reliable alone: the user-agent
+ * string catches devices that lie about screen size, and touch-plus-small-
+ * screen catches the ones that lie about their user agent. A touch-capable
+ * laptop is deliberately let through — touch alone is not disqualifying, it
+ * only counts alongside a small screen.
+ */
+function isLikelyMobile(): boolean {
+  const ua = navigator.userAgent;
+  const mobileUA = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
+  const touchDevice = navigator.maxTouchPoints > 0;
+  const smallScreen = window.matchMedia("(max-width: 768px)").matches;
+  return mobileUA || (touchDevice && smallScreen);
+}
+
 async function boot() {
+  // Stop before the WebAssembly download and before the socket: a device that
+  // cannot play should not cost the player a megabyte or take a seat in a
+  // queue it will never fill.
+  if (isLikelyMobile()) {
+    document.getElementById("mobileGate")?.classList.remove("hidden");
+    lobby.classList.add("hidden");
+    return;
+  }
   sim = await Sim.load("/tick_sim.wasm");
   net.onJson = onJson;
   net.onSnapshot = onSnapshot;
@@ -195,7 +230,10 @@ function chooseLoadout(w: number) {
 /** Death: freeze the backdrop, hand the mouse back, offer the loadout. */
 function enterDeath() {
   isDead = true;
-  renderer.frozen = true;
+  // The world keeps rendering while dead: the backdrop is the killcam, not a
+  // frozen frame. It only freezes if there is nobody left to watch.
+  renderer.frozen = false;
+  specEye = null;
   input.releaseLock();
   showKillerCard();
   const hint = document.getElementById("deathHint") as HTMLElement;
@@ -238,6 +276,8 @@ function showKillerCard() {
 function leaveDeath() {
   isDead = false;
   lastKiller = null;
+  spectating = 255;
+  specEye = null;
   renderer.frozen = false;
   killerCard.classList.add("hidden");
   deathOverlay.classList.add("hidden");
@@ -315,6 +355,7 @@ function onJson(msg: any) {
         btn.classList.remove("chosen");
       }
 
+      matchDuration = msg.duration ?? 240;
       const brushes = sim!.loadMap(msg.map);
       renderer.buildMap(brushes, msg.weather);
       renderer.setViewmodel(myWeapon);
@@ -421,6 +462,15 @@ function handleEvent(e: any) {
       hud.eventEnd();
       if (e.k === 0) renderer.setBlackout(false);
       break;
+    case "glass":
+      // The server broke a pane. Stop colliding with it, stop drawing it.
+      sim?.breakGlass(e.i);
+      if (sim) {
+        const g = sim.geometryView();
+        renderer.syncGeometry(g.view, g.count);
+      }
+      audio.blip(2100, 0.22, "triangle", 0.22);
+      break;
     case "pickup":
       if (e.slot === mySlot) {
         myWeapon = e.w;
@@ -456,6 +506,7 @@ function handleEvent(e: any) {
 
 function onSnapshot(snap: Snapshot) {
   latest = snap;
+  spectating = snap.spectate;
   snapshots.push(snap);
   if (snapshots.length > 24) snapshots.shift();
   reconcile(snap);
@@ -548,6 +599,42 @@ function cameraEye(): [number, number, number] {
   return [p[0] + smoothing[0], p[1] + eye + smoothing[1], p[2] + smoothing[2]];
 }
 
+/** The player we are spectating, from the latest snapshot. */
+function spectatedPlayer() {
+  if (!isDead || spectating === 255) return undefined;
+  return latest?.players.find((p) => p.slot === spectating);
+}
+
+/**
+ * Where the camera goes this frame. Alive, that is our own eye. Dead, it is
+ * the eye of whoever killed us — and if they die too, of whoever killed them,
+ * because the server walks that chain and tells us where to look. The
+ * position is eased rather than snapped so the cut is readable.
+ */
+function viewEye(dt: number): [number, number, number] {
+  const target = spectatedPlayer();
+  if (!target) {
+    specEye = null;
+    return cameraEye();
+  }
+  const want: [number, number, number] = [
+    target.x,
+    target.y + (target.crouching ? CROUCH_EYE : EYE_HEIGHT),
+    target.z,
+  ];
+  if (!specEye) {
+    specEye = want;
+  } else {
+    const k = Math.min(1, dt * 12);
+    specEye = [
+      specEye[0] + (want[0] - specEye[0]) * k,
+      specEye[1] + (want[1] - specEye[1]) * k,
+      specEye[2] + (want[2] - specEye[2]) * k,
+    ];
+  }
+  return specEye;
+}
+
 // -------------------------------------------------------------------- loop
 
 function frame(now: number) {
@@ -574,6 +661,13 @@ function frame(now: number) {
       const who = roster[lastKiller.slot];
       if (who) renderer.portraitFrame(killerView, who.character, who.team, dt);
     }
+    // Say whose view this is, and say so only while it actually is theirs.
+    const watching = spectatedPlayer();
+    deathTitle.textContent = watching
+      ? `Watching ${nameOf(watching.slot)}`
+      : myMode === 3
+      ? "Eliminated"
+      : "Respawning";
   }
 
   if (phase === "standby") {
@@ -583,12 +677,32 @@ function frame(now: number) {
       botTookOver = true;
       net.send({ t: "standby", on: true });
     }
-    renderer.update(dt, cameraEye(), input.yaw, input.pitch, 0, 0);
+    // Standby still honours the killcam: stepping away while dead should not
+    // silently snap the view back to your own corpse.
+    const away = spectatedPlayer();
+    renderer.hideViewmodel = away !== undefined;
+    renderer.update(
+      dt,
+      viewEye(dt),
+      away ? away.yaw : input.yaw,
+      away ? away.pitch : input.pitch,
+      0,
+      0,
+    );
     return;
   }
 
   if (phase === "match" && sim) {
     counters.matchFrames++;
+    // Put scheduled brushes where the match clock says they are, before
+    // predicting into them and before drawing them. Elapsed time comes from
+    // the server's own clock, so a sliding container is in the same place
+    // here as it is on the server.
+    if (latest) {
+      sim.setTime(matchDuration - latest.timeLeft);
+      const g = sim.geometryView();
+      renderer.syncGeometry(g.view, g.count);
+    }
     accumulator += dt * 1000;
     let steps = 0;
     while (accumulator >= TICK_MS && steps < 8) {
@@ -611,6 +725,8 @@ function frame(now: number) {
     // While aiming (right click) the crosshair collapses to a single dot so
     // there is always a precise marker for where the gun points.
     crosshairEl.classList.toggle("ads", !scoped && adsAmount > 0.5);
+    // Ridge's hipfire reticle is dashed black-and-white rather than solid white.
+    crosshairEl.classList.toggle("sniper", myWeapon === 1);
     input.adsSensScale = myWeapon === 1 ? 0.4 : 0.7;
 
     // Melee swing sound on the key's rising edge (fire also swings when the
@@ -626,7 +742,17 @@ function frame(now: number) {
   }
 
   const speed = sim ? Math.hypot(sim.vel[0], sim.vel[2]) : 0;
-  renderer.update(dt, cameraEye(), input.yaw, input.pitch, adsAmount, speed);
+  // While dead, look through the killer's eyes with their aim, not ours.
+  const spec = spectatedPlayer();
+  renderer.hideViewmodel = spec !== undefined;
+  renderer.update(
+    dt,
+    viewEye(dt),
+    spec ? spec.yaw : input.yaw,
+    spec ? spec.pitch : input.pitch,
+    spec ? 0 : adsAmount,
+    spec ? 0 : speed,
+  );
   hud.tick(dt);
 
   if (againCountdown > 0) {
@@ -692,7 +818,9 @@ function renderPlayers() {
       marked: p.marked,
       staggered: p.staggered,
       carrying: p.carrying,
-      isLocal: p.slot === mySlot,
+      // Whoever the camera is inside is not drawn: our own body normally,
+      // the player we are spectating while dead.
+      isLocal: p.slot === mySlot || p.slot === spectating,
     });
   }
   renderer.syncPlayers(out);
@@ -810,6 +938,17 @@ function showResults(msg: any) {
     seq: inputSeq,
     ack: latest?.ack ?? 0,
     pending: pending.length,
+    isDead,
+    spectating,
+    frozen: renderer.frozen,
+    // The killcam's own view of itself: who it resolved, and the eye it hands
+    // the renderer. Both come from the real functions, not a copy of them.
+    spectated: spectatedPlayer()?.slot ?? null,
+    camera: [
+      renderer.camera.position.x,
+      renderer.camera.position.y,
+      renderer.camera.position.z,
+    ],
     counters: { ...counters },
     accumulator,
   }),

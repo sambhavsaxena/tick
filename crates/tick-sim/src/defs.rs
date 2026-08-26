@@ -4,7 +4,7 @@
 //! that balance changes are a single-file diff and so that the server and the
 //! client read the same table.
 
-use crate::math::{v3, Aabb, Vec3};
+use crate::math::{sin, v3, Aabb, Vec3};
 
 pub const TICK_HZ: u32 = 64;
 pub const DT: f32 = 1.0 / TICK_HZ as f32;
@@ -437,14 +437,59 @@ impl MapId {
     }
 }
 
+/// A brush that moves on a fixed schedule.
+///
+/// Motion is a pure function of match time, so the server and every client
+/// derive the same position from the same clock without a byte on the wire,
+/// and a container that has slid three metres is in the same place for the
+/// player walking into it and for the shot passing over it.
+#[derive(Clone, Copy, Debug)]
+pub struct Motion {
+    /// Centre at phase zero.
+    pub center: Vec3,
+    /// Half-extents, constant through the cycle.
+    pub half: Vec3,
+    /// Travel direction; the brush swings `amplitude` metres either side.
+    pub axis: Vec3,
+    pub amplitude: f32,
+    /// Seconds for one full there-and-back cycle.
+    pub period: f32,
+    /// Fraction of a cycle this brush starts ahead of the others.
+    pub phase: f32,
+}
+
+impl Motion {
+    /// Where this brush sits at `time` seconds into the match.
+    pub fn aabb_at(&self, time: f32) -> Aabb {
+        let t = (time / self.period + self.phase) * core::f32::consts::TAU;
+        let offset = sin(t) * self.amplitude;
+        Aabb::from_center(
+            v3(
+                self.center.x + self.axis.x * offset,
+                self.center.y + self.axis.y * offset,
+                self.center.z + self.axis.z * offset,
+            ),
+            self.half,
+        )
+    }
+}
+
 /// A solid box of level geometry.
 #[derive(Clone, Copy, Debug)]
 pub struct Brush {
+    /// The brush's position *now*. For a moving brush this is rewritten once
+    /// per tick from `motion`, so every query in the simulation keeps reading
+    /// one field and never has to know whether the geometry is animated.
     pub aabb: Aabb,
     /// Thin cover: Arc's projectiles punch through it at half damage.
     pub thin: bool,
-    /// Breakable glass (Terrace atrium). Removed from the world when broken.
+    /// Breakable glass (Terrace atrium). Shot out, it stops colliding.
     pub glass: bool,
+    /// Set when glass has been broken. A broken brush is skipped by every
+    /// collision and trace query, and the client is told to stop drawing it.
+    pub broken: bool,
+    /// Present on brushes that move to a schedule.
+    pub motion: Option<Motion>,
 }
 
 pub struct MapData {
@@ -463,6 +508,8 @@ fn solid(cx: f32, cy: f32, cz: f32, hx: f32, hy: f32, hz: f32) -> Brush {
         aabb: Aabb::from_center(v3(cx, cy, cz), v3(hx, hy, hz)),
         thin: false,
         glass: false,
+        broken: false,
+        motion: None,
     }
 }
 
@@ -471,6 +518,8 @@ fn thin(cx: f32, cy: f32, cz: f32, hx: f32, hy: f32, hz: f32) -> Brush {
         aabb: Aabb::from_center(v3(cx, cy, cz), v3(hx, hy, hz)),
         thin: true,
         glass: false,
+        broken: false,
+        motion: None,
     }
 }
 
@@ -479,7 +528,26 @@ fn glass(cx: f32, cy: f32, cz: f32, hx: f32, hy: f32, hz: f32) -> Brush {
         aabb: Aabb::from_center(v3(cx, cy, cz), v3(hx, hy, hz)),
         thin: true,
         glass: true,
+        broken: false,
+        motion: None,
     }
+}
+
+/// Give a brush a travel schedule. The brush starts at its authored centre
+/// and swings `amplitude` metres along `axis`, once every `period` seconds.
+fn moving(mut b: Brush, axis: Vec3, amplitude: f32, period: f32, phase: f32) -> Brush {
+    let center = b.aabb.center();
+    let half = b.aabb.half();
+    b.motion = Some(Motion {
+        center,
+        half,
+        axis,
+        amplitude,
+        period,
+        phase,
+    });
+    b.aabb = b.motion.unwrap().aabb_at(0.0);
+    b
 }
 
 /// Floor plus four perimeter walls, shared by every map.
@@ -567,10 +635,25 @@ pub fn load_map(id: MapId) -> MapData {
                 for gz in [-16.0f32, -8.0, 0.0, 8.0, 16.0] {
                     rows += 1;
                     let h = if rows % 3 == 0 { 2.6 } else { 1.3 };
-                    b.push(Brush {
+                    let container = Brush {
                         aabb: Aabb::from_center(v3(gx, h, gz), v3(3.0, h, 1.4)),
                         thin: rows % 4 == 0,
                         glass: false,
+                        broken: false,
+                        motion: None,
+                    };
+                    // The inner columns ride cranes: each slides four metres
+                    // along its lane and back, opening and closing a sightline
+                    // on a schedule both teams can learn. Only the inner
+                    // columns move, because their swept volume is the only one
+                    // that stays clear of every spawn and terminal — a crate
+                    // that can park on top of a spawn point is a crate that
+                    // can kill someone for respawning.
+                    let travels = gx.abs() == 8.0 && gz.abs() <= 8.0;
+                    b.push(if travels {
+                        moving(container, v3(0.0, 0.0, 1.0), 4.0, 24.0, rows as f32 * 0.17)
+                    } else {
+                        container
                     });
                 }
             }
@@ -698,9 +781,23 @@ pub fn load_map(id: MapId) -> MapData {
             b.push(solid(0.0, 2.4, -5.0, 2.0, 1.2, 2.5));
             b.push(solid(0.0, 1.2, 7.0, 2.0, 1.2, 2.5));
             b.push(solid(0.0, 2.4, 5.0, 2.0, 1.2, 2.5));
-            // Shutters: thin so Arc can contest the deck through them.
-            b.push(thin(-5.0, 4.6, 0.0, 0.2, 1.2, 5.0));
-            b.push(thin(5.0, 4.6, 0.0, 0.2, 1.2, 5.0));
+            // Shutters: thin so Arc can contest the deck through them, and on
+            // a slow rise-and-fall cycle. Raised, the control room is open
+            // from the flanks; lowered, it is a box with two ramps.
+            b.push(moving(
+                thin(-5.0, 4.6, 0.0, 0.2, 1.2, 5.0),
+                v3(0.0, 1.0, 0.0),
+                1.3,
+                18.0,
+                0.0,
+            ));
+            b.push(moving(
+                thin(5.0, 4.6, 0.0, 0.2, 1.2, 5.0),
+                v3(0.0, 1.0, 0.0),
+                1.3,
+                18.0,
+                0.5,
+            ));
             // Boulders along the open approach: jumpable tops, natural cover
             // on an otherwise architectural map. Mirrored in z.
             for (bx, bz) in [(5.0f32, 12.0f32), (-5.0, 12.0), (5.0, -12.0), (-5.0, -12.0)] {

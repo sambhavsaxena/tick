@@ -37,6 +37,10 @@ pub enum StaticEvent {
     TheMark = 7,
     OvertimeCoin = 8,
     HardLight = 9,
+    /// Uplink only: a second core, so both teams can be carrying at once.
+    TwinCore = 10,
+    /// Headhunt only: head shots are the only damage that registers at all.
+    Pinhead = 11,
 }
 
 impl StaticEvent {
@@ -52,6 +56,8 @@ impl StaticEvent {
             StaticEvent::TheMark => "The Mark",
             StaticEvent::OvertimeCoin => "Overtime Coin",
             StaticEvent::HardLight => "Hard Light",
+            StaticEvent::TwinCore => "Twin Core",
+            StaticEvent::Pinhead => "Pinhead",
         }
     }
     pub fn blurb(self) -> &'static str {
@@ -66,6 +72,8 @@ impl StaticEvent {
             StaticEvent::TheMark => "The leader is lit up. Triple points.",
             StaticEvent::OvertimeCoin => "Final 30 seconds. Everything scores double.",
             StaticEvent::HardLight => "Bullets pass through cover. Angles are gone.",
+            StaticEvent::TwinCore => "A second core is live. Both can be banked.",
+            StaticEvent::Pinhead => "Heads only. Body shots do nothing at all.",
         }
     }
     pub fn duration(self) -> f32 {
@@ -80,6 +88,8 @@ impl StaticEvent {
             StaticEvent::TheMark => 30.0,
             StaticEvent::OvertimeCoin => 30.0,
             StaticEvent::HardLight => 20.0,
+            StaticEvent::TwinCore => 9_999.0,
+            StaticEvent::Pinhead => 20.0,
         }
     }
     /// Events that tilt toward the trailing team rather than applying evenly.
@@ -94,7 +104,16 @@ impl StaticEvent {
     }
     /// The draw pool for scheduled events. Overtime Coin is deliberately not
     /// in it: it is placed by hand at the end of every match.
-    pub const POOL: [StaticEvent; 9] = [
+    /// Events that only make sense in one mode. Everything else draws in any
+    /// mode, which is what keeps the schedule's spacing rules mode-agnostic.
+    pub fn mode_lock(self) -> Option<Mode> {
+        match self {
+            StaticEvent::TwinCore => Some(Mode::Uplink),
+            StaticEvent::Pinhead => Some(Mode::Headhunt),
+            _ => None,
+        }
+    }
+    pub const POOL: [StaticEvent; 11] = [
         StaticEvent::Blackout,
         StaticEvent::GravityDip,
         StaticEvent::GoldenClip,
@@ -104,8 +123,10 @@ impl StaticEvent {
         StaticEvent::Airdrop,
         StaticEvent::TheMark,
         StaticEvent::HardLight,
+        StaticEvent::TwinCore,
+        StaticEvent::Pinhead,
     ];
-    pub const ALL: [StaticEvent; 10] = [
+    pub const ALL: [StaticEvent; 12] = [
         StaticEvent::Blackout,
         StaticEvent::GravityDip,
         StaticEvent::GoldenClip,
@@ -116,6 +137,8 @@ impl StaticEvent {
         StaticEvent::TheMark,
         StaticEvent::OvertimeCoin,
         StaticEvent::HardLight,
+        StaticEvent::TwinCore,
+        StaticEvent::Pinhead,
     ];
 }
 
@@ -222,6 +245,29 @@ pub enum SimEvent {
     },
 }
 
+/// One Uplink core. A match starts with a single core; the Twin Core event
+/// adds a second that behaves identically and banks at the same terminal.
+#[derive(Clone, Copy, Debug)]
+pub struct Core {
+    pub pos: Vec3,
+    pub carrier: Option<u8>,
+    pub active: bool,
+    pub respawn_at: f32,
+}
+
+impl Default for Core {
+    fn default() -> Core {
+        Core {
+            pos: Vec3::ZERO,
+            carrier: None,
+            active: false,
+            // The first core goes live fifteen seconds in, so a match opens
+            // with a fight for position rather than a fight for the core.
+            respawn_at: 15.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PlayerStats {
     pub kills: u32,
@@ -309,6 +355,9 @@ pub struct Player {
     /// Headhunt: reduced to 1 HP by body damage, finishable only by a head
     /// shot or a melee execution, regenerating after four seconds clear.
     pub staggered: bool,
+    /// Who last killed this player, for the death camera. `None` for a death
+    /// with no attacker — the fog wall, a fall — which shows no killcam.
+    pub killed_by: Option<u8>,
     pub stagger_clear_at: f32,
 
     pub ammo: i32,
@@ -377,6 +426,7 @@ impl Player {
             charge: 0.0,
             focus_timer: 0.0,
             carrying_core: false,
+            killed_by: None,
             marked: false,
             rewind_ticks: 6,
             last_damaged_at: -99.0,
@@ -528,10 +578,9 @@ pub struct World {
     pub first_blood_taken: bool,
 
     // Uplink
-    pub core_pos: Vec3,
-    pub core_carrier: Option<u8>,
-    pub core_active: bool,
-    pub core_respawn_at: f32,
+    /// Uplink's cores. One for a normal match; the Twin Core event adds a
+    /// second, so both teams can be carrying at the same time.
+    pub cores: Vec<Core>,
     pub terminal_index: usize,
 
     // Last Light
@@ -590,10 +639,7 @@ impl World {
             team_score: [0, 0],
             head_streak: [0, 0],
             first_blood_taken: false,
-            core_pos: Vec3::ZERO,
-            core_carrier: None,
-            core_active: false,
-            core_respawn_at: 15.0,
+            cores: vec![Core::default()],
             terminal_index: 0,
             round: 1,
             round_wins: [0, 0],
@@ -745,6 +791,10 @@ impl World {
         self.time += DT;
         self.time_left -= DT;
 
+        // Before anything reads geometry: sliding containers and rising
+        // shutters are where the clock says they are, for movement, traces
+        // and spawn checks alike.
+        self.step_geometry();
         self.step_schedule();
         self.step_players();
         self.step_projectiles();
@@ -898,6 +948,16 @@ impl World {
                     weapon: Weapon::Lance,
                     taken: false,
                 });
+            }
+            // A second core, live immediately, so the event changes the fight
+            // the moment it lands rather than after a respawn timer.
+            StaticEvent::TwinCore => {
+                if self.cores.len() < 2 {
+                    let mut second = Core::default();
+                    second.pos = self.core_home(1);
+                    second.active = true;
+                    self.cores.push(second);
+                }
             }
             _ => {}
         }
@@ -1199,9 +1259,14 @@ impl World {
     ) -> (bool, bool, Vec3) {
         let back = self.players[shooter].rewind_ticks as usize;
         let hard_light = self.event_active(StaticEvent::HardLight);
-        let (mut world_t, world_thin) = trace_world(origin, dir, 120.0, &self.map.brushes);
+        let wh = trace_world(origin, dir, 120.0, &self.map.brushes);
+        let mut world_t = wh.t;
+        // A bullet through a pane takes the pane with it. The hole is
+        // permanent for the rest of the match, so the atrium a team fought
+        // through in the first minute is open ground by the third.
+        self.break_glass(wh.brush);
         // Hard Light lets every shot punch one wall.
-        let penetrating = hard_light || world_thin;
+        let penetrating = hard_light || wh.thin;
         let wall_limit = if penetrating { 120.0 } else { world_t };
 
         // Shimmer walls stop enemy bullets, but not their owners'.
@@ -1311,6 +1376,12 @@ impl World {
         through_cover: bool,
     ) {
         if !self.players[victim].alive || raw <= 0.0 {
+            return;
+        }
+        // Pinhead: for its twenty seconds, a body shot is not reduced damage,
+        // it is no damage. Melee still finishes, so the knife stays the
+        // answer to someone you have already got close to.
+        if !headshot && self.event_active(StaticEvent::Pinhead) && raw < 900.0 {
             return;
         }
         let full_health_before =
@@ -1512,13 +1583,24 @@ impl World {
         // Drop the core where the carrier fell.
         if self.players[victim].carrying_core {
             self.players[victim].carrying_core = false;
-            self.core_carrier = None;
-            self.core_pos = self.players[victim].mv.pos.add(v3(0.0, 0.6, 0.0));
-            self.events.push(SimEvent::CoreDropped { pos: self.core_pos });
+            let dropped = self.players[victim].mv.pos.add(v3(0.0, 0.6, 0.0));
+            for c in &mut self.cores {
+                if c.carrier == Some(victim as u8) {
+                    c.carrier = None;
+                    c.pos = dropped;
+                }
+            }
+            self.events.push(SimEvent::CoreDropped { pos: dropped });
         }
 
+        let killer = if attacker == victim {
+            None
+        } else {
+            Some(attacker as u8)
+        };
         let p = &mut self.players[victim];
         p.alive = false;
+        p.killed_by = killer;
         p.staggered = false;
         p.health = 0;
         p.stats.deaths += 1;
@@ -1568,7 +1650,11 @@ impl World {
                         let t = s as f32 * 0.5;
                         let cand = pos.add(dir.scale(t));
                         let bx = player_box(cand, self.players[i].mv.crouching);
-                        let hit = self.map.brushes.iter().any(|b| b.aabb.overlaps(&bx));
+                        let hit = self
+                            .map
+                            .brushes
+                            .iter()
+                            .any(|b| !b.broken && b.aabb.overlaps(&bx));
                         if hit {
                             break;
                         }
@@ -1642,6 +1728,9 @@ impl World {
     fn step_projectiles(&mut self) {
         let mut hits: Vec<(usize, usize, f32, bool, f32, bool)> = Vec::new();
         let mut remove: Vec<usize> = Vec::new();
+        // Panes a projectile passed through. Collected rather than broken in
+        // place because the loop already holds a borrow on the projectiles.
+        let mut broke_glass: Vec<usize> = Vec::new();
         let hard_light = self.event_active(StaticEvent::HardLight);
 
         for (idx, pr) in self.projectiles.iter_mut().enumerate() {
@@ -1655,7 +1744,9 @@ impl World {
             let dir = step.normalized();
             let origin = pr.pos;
 
-            let (world_t, world_thin) = trace_world(origin, dir, dist, &self.map.brushes);
+            let wh = trace_world(origin, dir, dist, &self.map.brushes);
+            let (world_t, world_thin) = (wh.t, wh.thin);
+            broke_glass.push(wh.brush);
             let mut best_t = dist;
             let mut target: Option<(usize, bool)> = None;
             for j in 0..self.players.len() {
@@ -1710,6 +1801,9 @@ impl World {
         for idx in remove.into_iter().rev() {
             self.projectiles.remove(idx);
         }
+        for b in broke_glass {
+            self.break_glass(b);
+        }
         for (attacker, victim, dmg, head, dist, cover) in hits {
             self.players[attacker].stats.shots_hit += 1;
             self.players[attacker].eng_hits += 1;
@@ -1752,46 +1846,75 @@ impl World {
     // -------------------------------------------------------------- uplink
 
     fn step_uplink(&mut self) {
-        if !self.core_active {
-            if self.time >= self.core_respawn_at {
-                self.core_active = true;
-                self.core_pos = self.map.center;
-                self.core_carrier = None;
+        // Each core is independent: it respawns on its own clock, is carried
+        // by at most one player, and banks at the shared terminal. With one
+        // core this is exactly the original single-core game; with two, both
+        // teams can be running at once.
+        for ci in 0..self.cores.len() {
+            self.step_core(ci);
+        }
+    }
+
+    fn step_core(&mut self, ci: usize) {
+        if !self.cores[ci].active {
+            if self.time >= self.cores[ci].respawn_at {
+                self.cores[ci].active = true;
+                self.cores[ci].pos = self.core_home(ci);
+                self.cores[ci].carrier = None;
             }
             return;
         }
-        if let Some(c) = self.core_carrier {
-            let ci = c as usize;
-            if !self.players[ci].alive {
-                self.core_carrier = None;
-            } else {
-                self.core_pos = self.players[ci].mv.pos.add(v3(0.0, 1.0, 0.0));
-                let term = self.map.terminals[self.terminal_index % self.map.terminals.len()];
-                if self.players[ci].mv.pos.sub(term).len() < 2.0 {
-                    let team = self.players[ci].team as usize;
-                    self.team_score[team] += 1;
-                    self.players[ci].stats.score += (200.0 * self.score_mult()) as i32;
-                    self.players[ci].carrying_core = false;
-                    self.core_carrier = None;
-                    self.core_active = false;
-                    self.core_respawn_at = self.time + 5.0;
-                    self.terminal_index += 1;
-                    self.events.push(SimEvent::Bank {
-                        slot: c,
-                        team: team as u8,
-                    });
-                }
+        if let Some(c) = self.cores[ci].carrier {
+            let pi = c as usize;
+            if !self.players[pi].alive {
+                self.cores[ci].carrier = None;
+                return;
+            }
+            self.cores[ci].pos = self.players[pi].mv.pos.add(v3(0.0, 1.0, 0.0));
+            let term = self.map.terminals[self.terminal_index % self.map.terminals.len()];
+            if self.players[pi].mv.pos.sub(term).len() < 2.0 {
+                let team = self.players[pi].team as usize;
+                self.team_score[team] += 1;
+                self.players[pi].stats.score += (200.0 * self.score_mult()) as i32;
+                self.players[pi].carrying_core = false;
+                self.cores[ci].carrier = None;
+                self.cores[ci].active = false;
+                self.cores[ci].respawn_at = self.time + 5.0;
+                self.terminal_index += 1;
+                self.events.push(SimEvent::Bank {
+                    slot: c,
+                    team: team as u8,
+                });
             }
             return;
         }
         for j in 0..self.players.len() {
-            if self.players[j].alive && self.players[j].mv.pos.sub(self.core_pos).len() < 1.5 {
-                self.core_carrier = Some(j as u8);
+            // One core per pair of hands: a player already carrying cannot
+            // scoop up the second one and bank both in a single run.
+            if self.players[j].alive
+                && !self.players[j].carrying_core
+                && self.players[j].mv.pos.sub(self.cores[ci].pos).len() < 1.5
+            {
+                self.cores[ci].carrier = Some(j as u8);
                 self.players[j].carrying_core = true;
                 self.players[j].stats.score += 60;
                 self.events.push(SimEvent::CoreTaken { slot: j as u8 });
                 return;
             }
+        }
+    }
+
+    /// Where a core returns to. The first sits at the map's centre; a Twin
+    /// Core second one sits off to the side, so the two are never contested
+    /// from the same piece of cover.
+    fn core_home(&self, ci: usize) -> Vec3 {
+        if ci == 0 {
+            self.map.center
+        } else {
+            free_spot(
+                self.map.center.add(v3(self.map.bounds.max.x * 0.5, 0.0, 0.0)),
+                &self.map.brushes,
+            )
         }
     }
 
@@ -1968,6 +2091,69 @@ impl World {
             .count()
     }
 
+    /// Who a dead player watches: their killer, and if that killer is dead
+    /// too, whoever killed *them*, and so on down the chain.
+    ///
+    /// The walk is bounded and refuses to revisit a slot, because two players
+    /// who trade kills point at each other and a naive follow would spin.
+    /// Returns `None` for a player who is alive, was not killed by anyone, or
+    /// whose whole chain is dead — at which point there is nothing to watch.
+    pub fn spectate_target(&self, slot: u8) -> Option<u8> {
+        let me = self.players.get(slot as usize)?;
+        if me.alive {
+            return None;
+        }
+        let mut seen = [false; MAX_PLAYERS];
+        seen[slot as usize] = true;
+        let mut at = me.killed_by?;
+        for _ in 0..MAX_PLAYERS {
+            let p = self.players.get(at as usize)?;
+            if seen[at as usize] {
+                return None;
+            }
+            if p.alive {
+                return Some(at);
+            }
+            seen[at as usize] = true;
+            at = p.killed_by?;
+        }
+        None
+    }
+
+    /// Break a pane of glass, if that is what the index refers to.
+    ///
+    /// Takes any brush index — including `usize::MAX` for "nothing was hit" —
+    /// so callers can hand over whatever their trace returned without
+    /// checking first. Solid brushes and already-broken panes are no-ops, so
+    /// the `GlassBroken` event fires exactly once per pane per match.
+    fn break_glass(&mut self, index: usize) {
+        let Some(b) = self.map.brushes.get_mut(index) else {
+            return;
+        };
+        if !b.glass || b.broken {
+            return;
+        }
+        b.broken = true;
+        self.events.push(SimEvent::GlassBroken {
+            index: index as u32,
+        });
+    }
+
+    /// Move every scheduled brush to where the clock says it is.
+    ///
+    /// Runs before anything reads geometry this tick, so movement, traces and
+    /// spawn checks all agree on where a sliding container is. Position is a
+    /// pure function of elapsed time, which is why this needs no state and
+    /// why the client reproduces it exactly from the same number.
+    fn step_geometry(&mut self) {
+        let t = self.time;
+        for b in &mut self.map.brushes {
+            if let Some(m) = b.motion {
+                b.aabb = m.aabb_at(t);
+            }
+        }
+    }
+
     /// The clock is the only thing that ends a match. Score decides who won
     /// when it runs out, but no lead is ever large enough to end one early:
     /// every match is worth the same four minutes of your time, and a team
@@ -2018,7 +2204,7 @@ pub fn free_spot(base: Vec3, brushes: &[Brush]) -> Vec3 {
 
 fn spot_blocked(pos: Vec3, brushes: &[Brush]) -> bool {
     let b = player_box(pos, false);
-    brushes.iter().any(|s| s.aabb.overlaps(&b))
+    brushes.iter().any(|s| !s.broken && s.aabb.overlaps(&b))
 }
 
 /// Build a match's event schedule up front.
@@ -2048,16 +2234,21 @@ pub fn build_schedule(rng: &mut Rng, mode: Mode) -> Vec<ScheduledEvent> {
         }
         let span = (last - cursor).min(50.0);
         let at = cursor + rng.next_f32() * span;
-        // Draw an event that has not already been used this match. Overtime
-        // Coin is excluded from the pool entirely.
+        // Draw an event that has not already been used this match and that
+        // this mode can actually run. Overtime Coin is excluded from the pool
+        // entirely; Twin Core and Pinhead only draw in the one mode each of
+        // them means anything in.
         let pool = &StaticEvent::POOL;
+        let playable = |k: StaticEvent, used: &Vec<StaticEvent>| {
+            !used.contains(&k) && k.mode_lock().map_or(true, |m| m == mode)
+        };
         let mut kind = pool[rng.next_u32(pool.len() as u32) as usize];
         let mut guard = 0;
-        while used.contains(&kind) && guard < 12 {
+        while !playable(kind, &used) && guard < 16 {
             kind = pool[rng.next_u32(pool.len() as u32) as usize];
             guard += 1;
         }
-        if used.contains(&kind) {
+        if !playable(kind, &used) {
             break;
         }
         used.push(kind);
@@ -2219,25 +2410,39 @@ mod tests {
 
     #[test]
     fn no_spawn_point_sits_inside_geometry() {
+        // Moving brushes are checked across a whole cycle, not just where
+        // they happen to start. A container that parks on a spawn point for
+        // six seconds out of every twenty-four would pass a single-frame
+        // check and still kill people for respawning.
         for id in [MapId::Vault, MapId::Depot, MapId::Terrace, MapId::Substation] {
-            let map = load_map(id);
-            for (label, list) in [("A", &map.spawns_a), ("B", &map.spawns_b)] {
-                for (i, s) in list.iter().enumerate() {
+            let mut map = load_map(id);
+            for step in 0..=48 {
+                let t = step as f32 * 0.5;
+                for b in &mut map.brushes {
+                    if let Some(m) = b.motion {
+                        b.aabb = m.aabb_at(t);
+                    }
+                }
+                for (label, list) in [("A", &map.spawns_a), ("B", &map.spawns_b)] {
+                    for (i, s) in list.iter().enumerate() {
+                        assert!(
+                            !spot_blocked(*s, &map.brushes),
+                            "{} spawn {}{} is inside a brush at t={}",
+                            map.id.name(),
+                            label,
+                            i,
+                            t
+                        );
+                    }
+                }
+                for term in &map.terminals {
                     assert!(
-                        !spot_blocked(*s, &map.brushes),
-                        "{} spawn {}{} is inside a brush",
+                        !spot_blocked(*term, &map.brushes),
+                        "{} has a terminal inside a brush at t={}",
                         map.id.name(),
-                        label,
-                        i
+                        t
                     );
                 }
-            }
-            for t in &map.terminals {
-                assert!(
-                    !spot_blocked(*t, &map.brushes),
-                    "{} has a terminal inside a brush",
-                    map.id.name()
-                );
             }
         }
     }

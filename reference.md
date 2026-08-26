@@ -58,6 +58,9 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | **Uplink** — core, carrier, banking | `World::step_uplink`; carrier penalties in `Player::speed_mult`; core-crack bonus in `World::kill` |
 | **Last Light** — rounds, fog wall | `World::step_last_light` |
 | Ghost pings | `World::ghost_ping`, routed via `ToMatch::GhostPing` (`game.rs`), sent by client on click-while-dead (`main.ts`) |
+| Killcam (watch your killer, then *their* killer) | `Player::killed_by` and `World::spectate_target` (`lib.rs`); visibility resolved from the spectated eye in `compute_visibility` (`game.rs`); camera in `viewEye` (`main.ts`), honoured by both the match and standby render paths in `frame` |
+| Diagnosing the killcam | `window.tick.state()` — `spectating` is the slot the server sent, `spectated` is the one the client resolved, `camera` is where the view actually is |
+| Twin Core / Pinhead | `World::start_event` and `World::apply_damage`; drawn only in their own mode via `StaticEvent::mode_lock` |
 | Second Wind (round 4) | inside `World::step_last_light` |
 
 ---
@@ -73,7 +76,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Hitscan resolution + lag compensation | `World::resolve_hitscan` |
 | Arc's travelling projectiles + cover penetration | `World::step_projectiles` |
 | Viewmodel shapes | `Renderer.setViewmodel` (`client/src/render.ts`) |
-| Gunshot sound per weapon | `WEAPON_TONE` in `client/src/audio.ts`; layered in `Audio.shot` |
+| Gunshot sound per weapon | `WEAPON_TONE` in `client/src/audio.ts`; layered in `Audio.shot`. `thudTop` / `thudFloor` / `muffle` / `soft` on a tone shape it into a deep thud rather than a bright report — Ridge uses all four |
 | Melee swing whoosh | `Audio.swing`, fired on the melee key's rising edge in `main.ts` |
 
 ---
@@ -99,6 +102,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Piece | Where |
 |---|---|
 | Geometry, spawns, terminals | `load_map` in `defs.rs` |
+| Moving brushes (Depot cranes, Substation shutters) | `Motion` / `moving` in `defs.rs`; applied by `World::step_geometry`, mirrored client-side by wasm `set_time` |
+| Breakable glass | `World::break_glass`, called from `resolve_hitscan` and `step_projectiles`; `SimEvent::GlassBroken` → wasm `break_glass` → `Renderer.syncGeometry` |
 | Spawn safety (never inside a wall) | `free_spot` / `spot_blocked` in `lib.rs`, plus `World::best_spawn` |
 | Client geometry (same brushes) | `Sim.loadMap` (`client/src/sim.ts`) → `Renderer.buildMap` |
 | Weather gameplay effect | `Weather::sight_range` — feeds bot perception (`bot.rs`) and snapshot culling (`game.rs`) |
@@ -115,7 +120,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 
 | Piece | Where |
 |---|---|
-| The event list, durations, blurbs | `StaticEvent` in `lib.rs` |
+| The event list, durations, blurbs | `StaticEvent` in `lib.rs` (twelve, two mode-locked) |
 | Schedule generation and its rules | `build_schedule` (seeded at match start, 60 s floor, 45 s gap, coin last) |
 | Telegraph → fire → expire | `World::step_schedule` |
 | Per-event effects | `World::start_event` |
@@ -180,6 +185,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Killer card on the death screen | `showKillerCard` (`main.ts`) + `Renderer.portraitFrame` — its own small WebGL context, because the main canvas is frozen |
 | Callsign assignment | `random_callsign` in `main.rs` — dictionary pair plus a four-digit connection tag |
 | Aim dot while ADS | `#crosshair.ads` in `style.css`, toggled in `frame` (`main.ts`) |
+| Ridge's dashed black-and-white hipfire reticle | `#crosshair.sniper` in `style.css`, toggled in `frame` (`main.ts`) |
+| Scope reticle (dashed lines, red centre dot) | `.scopeLine` / `.scopeDot` in `style.css`, markup in `client/index.html` |
 | Standby (`Esc Esc`, tab hidden, lost pointer lock) | `enterStandby` / `leaveStandby` in `main.ts` |
 | Pointer lock, key mapping, sensitivity | `client/src/input.ts` (`KEY_BUTTONS`) |
 | HUD elements | `client/src/hud.ts` + `client/index.html` + `client/src/style.css` |
@@ -205,10 +212,11 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 
 Tracked here so they are not re-reported as bugs. Full wording in `README.md`.
 
-- WebTransport / HTTP-3 (WebSocket only today)
-- Replay capture and sharing; daily Precision Report
-- Free-fly ghost spectating (ghost *pings* work)
-- Map dynamic elements: Depot cranes, Vault floodlights, Substation shutters,
-  Terrace breakable glass (glass is currently thin cover — shoot through, not walk through)
-- Twin Core (Uplink) and Pinhead (Headhunt) mode events
-- Cosmetics and accounts; skill-based matchmaking
+- WebTransport / HTTP-3 (WebSocket only, by decision — see `README.md`)
+- Vault's floodlight cycle (Depot cranes, Substation shutters and Terrace
+  breakable glass are all implemented)
+- Cosmetics and accounts
+
+Out of scope by decision, not backlog: replay capture, the daily Precision
+Report, free-fly ghost spectating (the killcam replaces it), and skill-based
+matchmaking.

@@ -59,7 +59,14 @@ export class Net {
         }
         this.onJson(msg);
       } else {
-        const snap = decodeSnapshot(ev.data as ArrayBuffer);
+        // A malformed or unexpected snapshot must not take the socket's
+        // message handler down with it; every later snapshot would be lost.
+        let snap: Snapshot | null = null;
+        try {
+          snap = decodeSnapshot(ev.data as ArrayBuffer);
+        } catch (err) {
+          console.error("TICK: could not decode a snapshot", err);
+        }
         if (snap) this.onSnapshot(snap);
       }
     };

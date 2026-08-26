@@ -99,6 +99,20 @@ impl Aabb {
             max: center.add(half),
         }
     }
+    pub fn center(&self) -> Vec3 {
+        v3(
+            (self.min.x + self.max.x) * 0.5,
+            (self.min.y + self.max.y) * 0.5,
+            (self.min.z + self.max.z) * 0.5,
+        )
+    }
+    pub fn half(&self) -> Vec3 {
+        v3(
+            (self.max.x - self.min.x) * 0.5,
+            (self.max.y - self.min.y) * 0.5,
+            (self.max.z - self.min.z) * 0.5,
+        )
+    }
     pub fn overlaps(&self, o: &Aabb) -> bool {
         self.min.x < o.max.x
             && self.max.x > o.min.x

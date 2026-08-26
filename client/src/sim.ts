@@ -19,6 +19,8 @@ export interface SimExports {
     speedMult: number, gravityMult: number, canSprint: number,
     pullX: number, pullZ: number,
   ): void;
+  set_time(time: number): void;
+  break_glass(index: number): void;
   memory: WebAssembly.Memory;
 }
 
@@ -27,6 +29,8 @@ export interface Brush {
   max: [number, number, number];
   thin: boolean;
   glass: boolean;
+  /** A pane that has been shot out: no collision, and not drawn. */
+  broken: boolean;
 }
 
 export class Sim {
@@ -49,6 +53,15 @@ export class Sim {
     this.ex.world_init(mapId);
     // Re-view: instantiating may have grown linear memory.
     this.state = new Float32Array(this.ex.memory.buffer, this.ex.state_ptr(), 8);
+    return this.readGeometry();
+  }
+
+  /**
+   * The current state of every brush. Re-read whenever geometry can have
+   * moved — brushes on a schedule slide, and panes get shot out — so the
+   * renderer keeps drawing exactly what collides.
+   */
+  readGeometry(): Brush[] {
     const n = this.ex.geometry_count();
     const g = new Float32Array(this.ex.memory.buffer, this.ex.geometry_ptr(), n * 7);
     const out: Brush[] = [];
@@ -58,11 +71,35 @@ export class Sim {
       out.push({
         min: [g[o], g[o + 1], g[o + 2]],
         max: [g[o + 3], g[o + 4], g[o + 5]],
-        thin: (flags % 2) === 1,
-        glass: flags >= 2,
+        thin: (flags & 1) === 1,
+        glass: (flags & 2) === 2,
+        broken: (flags & 4) === 4,
       });
     }
     return out;
+  }
+
+  /**
+   * A live view of the geometry buffer: seven floats per brush, no allocation.
+   * Used by the per-frame geometry sync, where building an array of brush
+   * objects sixty times a second would be pure garbage.
+   */
+  geometryView(): { view: Float32Array; count: number } {
+    const count = this.ex.geometry_count();
+    return {
+      view: new Float32Array(this.ex.memory.buffer, this.ex.geometry_ptr(), count * 7),
+      count,
+    };
+  }
+
+  /** Put scheduled brushes where this match time says they are. */
+  setTime(time: number) {
+    this.ex.set_time(time);
+  }
+
+  /** Mirror the server's GlassBroken: that pane no longer collides. */
+  breakGlass(index: number) {
+    this.ex.break_glass(index);
   }
 
   setState(

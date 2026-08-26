@@ -188,16 +188,24 @@ pub fn encode_snapshot(
         b.vec3(p.pos);
         b.u8(p.weapon as u8);
     }
-    let core_state: u8 = if !w.core_active {
-        0
-    } else if w.core_carrier.is_some() {
-        2
-    } else {
-        1
-    };
-    b.u8(core_state);
-    b.vec3(w.core_pos);
-    b.u8(w.core_carrier.unwrap_or(255));
+    // Cores are a counted list because the Twin Core event adds a second one
+    // mid-match. A non-Uplink match sends the count and one dormant core.
+    b.u8(w.cores.len().min(4) as u8);
+    for c in w.cores.iter().take(4) {
+        let state: u8 = if !c.active {
+            0
+        } else if c.carrier.is_some() {
+            2
+        } else {
+            1
+        };
+        b.u8(state);
+        b.vec3(c.pos);
+        b.u8(c.carrier.unwrap_or(255));
+    }
     b.u8(w.terminal_index as u8);
+    // Killcam: the slot this recipient is currently watching, 255 for nobody.
+    // Sent every snapshot because the chain moves on its own as people die.
+    b.u8(w.spectate_target(recipient).unwrap_or(255));
     b.0
 }

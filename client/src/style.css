@@ -63,6 +63,23 @@ html, body {
 }
 #crosshair.focus i { background: var(--warn); }
 
+/* Ridge (sniper): the arms are dashed black-and-white so they stay readable
+   against both a bright skyline and a dark interior. */
+#crosshair.sniper i {
+  background: repeating-linear-gradient(
+    var(--dash-angle, 180deg),
+    #fff 0 3px,
+    #000 3px 6px
+  );
+  box-shadow: 0 0 1px rgba(0, 0, 0, 0.9);
+}
+#crosshair.sniper i:nth-child(3),
+#crosshair.sniper i:nth-child(4) { --dash-angle: 90deg; }
+#crosshair.sniper b {
+  background: #fff;
+  box-shadow: 0 0 0 1px #000;
+}
+
 /* Aiming (right click): the arms pull in and vanish, and the centre becomes
    a single bright dot — the precise point the gun resolves to. */
 #crosshair i { transition: opacity 90ms linear, transform 90ms linear; }
@@ -479,13 +496,22 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 
 /* ------------------------------------------------------------ death screen */
 
+/* The backdrop is a live killcam, so the overlay sits low and stays mostly
+   transparent: the point is to watch the fight you just lost. */
 #deathOverlay {
   position: fixed;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  background: rgba(6, 8, 11, 0.55);
+  justify-content: flex-end;
+  padding-bottom: 4.5rem;
+  background: linear-gradient(
+    to bottom,
+    rgba(6, 8, 11, 0.15) 0%,
+    rgba(6, 8, 11, 0.15) 45%,
+    rgba(6, 8, 11, 0.82) 100%
+  );
   z-index: 9;
 }
 .deathInner { text-align: center; font-family: var(--sans); color: #c8d2dc; }
@@ -584,15 +610,62 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 }
 .scopeLine {
   position: absolute;
-  background: rgba(10, 12, 14, 0.8);
 }
 .scopeLine.h {
   left: 50%; top: 50%;
   width: min(76vh, 76vw); height: 1px;
   transform: translate(-50%, -50%);
+  background: repeating-linear-gradient(90deg, #fff 0 3px, #000 3px 6px);
 }
 .scopeLine.v {
   left: 50%; top: 50%;
   width: 1px; height: min(76vh, 76vw);
   transform: translate(-50%, -50%);
+  background: repeating-linear-gradient(180deg, #fff 0 3px, #000 3px 6px);
+}
+/* Zoomed in: a red centre dot marks the exact point the shot resolves to. */
+.scopeDot {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 4px; height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #ff2b2b;
+  box-shadow: 0 0 4px rgba(255, 43, 43, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.8);
+}
+
+/* ------------------------------------------------------------ desktop gate */
+
+/* Shown instead of the game on a phone or tablet. Sits above every other
+   overlay, because nothing behind it is reachable. */
+#mobileGate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: radial-gradient(ellipse at 50% 30%, #131a22 0%, #080b0f 70%);
+  z-index: 100;
+}
+.mobileGateInner { width: min(32rem, 100%); text-align: center; }
+#mobileGate h1 {
+  font-family: var(--mono);
+  font-size: clamp(3rem, 18vw, 5rem);
+  letter-spacing: -0.04em;
+  margin: 0 0 1.5rem;
+  line-height: 0.9;
+}
+.gateLead {
+  font-family: var(--mono);
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  color: var(--warn);
+  margin: 0 0 1.2rem;
+}
+.gateBody {
+  color: var(--dim);
+  line-height: 1.6;
+  font-size: 0.92rem;
+  margin: 0 0 1rem;
 }

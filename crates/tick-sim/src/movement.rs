@@ -60,7 +60,7 @@ pub fn player_box(pos: Vec3, crouching: bool) -> Aabb {
 
 fn blocked(pos: Vec3, crouching: bool, brushes: &[Brush]) -> bool {
     let b = player_box(pos, crouching);
-    brushes.iter().any(|s| s.aabb.overlaps(&b))
+    brushes.iter().any(|s| !s.broken && s.aabb.overlaps(&b))
 }
 
 /// Move one axis at a time and stop at the first blocking brush. Splitting the
@@ -216,20 +216,38 @@ pub fn step_movement(
 }
 
 /// Cast a ray against level geometry. Returns the distance to the nearest
-/// brush, and whether the first thing hit was thin cover.
+/// brush, whether the first thing hit was thin cover, and which brush it was.
 ///
 /// Glass is marked thin, so a shot through the atrium reaches the far side at
-/// half damage while still stopping a player from walking through the window.
-pub fn trace_world(origin: Vec3, dir: Vec3, max_t: f32, brushes: &[Brush]) -> (f32, bool) {
-    let mut best = max_t;
-    let mut best_thin = false;
-    for b in brushes {
+/// half damage while still stopping a player from walking through the window —
+/// until the pane is shot out, at which point the brush is broken and this
+/// stops seeing it at all.
+pub fn trace_world(origin: Vec3, dir: Vec3, max_t: f32, brushes: &[Brush]) -> WorldHit {
+    let mut hit = WorldHit {
+        t: max_t,
+        thin: false,
+        brush: usize::MAX,
+    };
+    for (i, b) in brushes.iter().enumerate() {
+        if b.broken {
+            continue;
+        }
         if let Some(t) = b.aabb.ray(origin, dir, max_t) {
-            if t < best {
-                best = t;
-                best_thin = b.thin;
+            if t < hit.t {
+                hit.t = t;
+                hit.thin = b.thin;
+                hit.brush = i;
             }
         }
     }
-    (best, best_thin)
+    hit
+}
+
+/// What a ray met in the level. `brush` is `usize::MAX` when nothing was hit
+/// inside the trace's range.
+#[derive(Clone, Copy, Debug)]
+pub struct WorldHit {
+    pub t: f32,
+    pub thin: bool,
+    pub brush: usize,
 }

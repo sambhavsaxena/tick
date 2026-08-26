@@ -33,13 +33,16 @@ fn map_ref() -> &'static MapData {
     unsafe { (*addr_of_mut!(MAP)).as_ref().expect("world_init not called") }
 }
 
-#[no_mangle]
-pub extern "C" fn world_init(map_id: u32) {
-    let map = load_map(MapId::from_u8(map_id as u8));
-    let n = map.brushes.len().min(512);
+/// Rewrite the geometry scratch buffer from the map's current brushes.
+///
+/// Called after anything that moves or removes a brush, so the renderer and
+/// the collision code the client predicts against never disagree about where
+/// the level is.
+fn publish_geometry() {
     unsafe {
+        let map = (*addr_of_mut!(MAP)).as_ref().expect("world_init not called");
         let g = &mut *addr_of_mut!(GEOMETRY);
-        for (i, b) in map.brushes.iter().take(n).enumerate() {
+        for (i, b) in map.brushes.iter().take(GEOMETRY_COUNT as usize).enumerate() {
             let o = i * 7;
             g[o] = b.aabb.min.x;
             g[o + 1] = b.aabb.min.y;
@@ -47,11 +50,53 @@ pub extern "C" fn world_init(map_id: u32) {
             g[o + 3] = b.aabb.max.x;
             g[o + 4] = b.aabb.max.y;
             g[o + 5] = b.aabb.max.z;
-            g[o + 6] = (b.thin as u32 as f32) + (b.glass as u32 as f32) * 2.0;
+            g[o + 6] = (b.thin as u32 as f32)
+                + (b.glass as u32 as f32) * 2.0
+                + (b.broken as u32 as f32) * 4.0;
         }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn world_init(map_id: u32) {
+    let map = load_map(MapId::from_u8(map_id as u8));
+    let n = map.brushes.len().min(512);
+    unsafe {
         GEOMETRY_COUNT = n as u32;
         MAP = Some(map);
     }
+    publish_geometry();
+}
+
+/// Move every scheduled brush to where `time` seconds into the match puts it.
+///
+/// This is the same `Motion::aabb_at` the server runs, from the same clock, so
+/// a sliding container is in the same place for the predicted local player as
+/// it is for the authoritative one. Call before stepping.
+#[no_mangle]
+pub extern "C" fn set_time(time: f32) {
+    unsafe {
+        let map = (*addr_of_mut!(MAP)).as_mut().expect("world_init not called");
+        for b in &mut map.brushes {
+            if let Some(m) = b.motion {
+                b.aabb = m.aabb_at(time);
+            }
+        }
+    }
+    publish_geometry();
+}
+
+/// Mark a pane broken, mirroring the server's `GlassBroken` event, so the
+/// client stops colliding with a window that is no longer there.
+#[no_mangle]
+pub extern "C" fn break_glass(index: u32) {
+    unsafe {
+        let map = (*addr_of_mut!(MAP)).as_mut().expect("world_init not called");
+        if let Some(b) = map.brushes.get_mut(index as usize) {
+            b.broken = true;
+        }
+    }
+    publish_geometry();
 }
 
 #[no_mangle]

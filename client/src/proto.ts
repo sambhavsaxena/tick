@@ -90,10 +90,14 @@ export interface Snapshot {
   shimmers: { x: number; y: number; z: number; yaw: number; team: number }[];
   cinders: { ax: number; ay: number; az: number; bx: number; by: number; bz: number; team: number }[];
   pickups: { x: number; y: number; z: number; weapon: number }[];
-  coreState: number;
-  corePos: [number, number, number];
-  coreCarrier: number;
+  /**
+   * Uplink cores. One in a normal match; the Twin Core event adds a second.
+   * `state` is 0 dormant, 1 loose on the ground, 2 being carried.
+   */
+  cores: { state: number; pos: [number, number, number]; carrier: number }[];
   terminalIndex: number;
+  /** Slot whose eyes we are watching through while dead; 255 for nobody. */
+  spectate: number;
   /** Wall-clock arrival time, used for entity interpolation. */
   received: number;
 }
@@ -184,22 +188,48 @@ export function decodeSnapshot(data: ArrayBuffer): Snapshot | null {
     const weapon = v.getUint8(o); o += 1;
     pickups.push({ x, y, z, weapon });
   }
-  const coreState = v.getUint8(o); o += 1;
-  const corePos: [number, number, number] = [
-    v.getFloat32(o, true),
-    v.getFloat32(o + 4, true),
-    v.getFloat32(o + 8, true),
-  ];
-  o += 12;
-  const coreCarrier = v.getUint8(o); o += 1;
+  const cores = [];
+  const coreCount = v.getUint8(o); o += 1;
+  for (let i = 0; i < coreCount; i++) {
+    const state = v.getUint8(o); o += 1;
+    const pos: [number, number, number] = [
+      v.getFloat32(o, true),
+      v.getFloat32(o + 4, true),
+      v.getFloat32(o + 8, true),
+    ];
+    o += 12;
+    const carrier = v.getUint8(o); o += 1;
+    cores.push({ state, pos, carrier });
+  }
   const terminalIndex = v.getUint8(o); o += 1;
+  // Trailing fields are read defensively. A server built from older sources
+  // sends a shorter snapshot, and reading past the end throws a RangeError
+  // that would silently swallow every snapshot from then on. Failing loudly
+  // here is worth far more than a mystery: the symptom of a stale server is
+  // otherwise just "one feature quietly does nothing".
+  if (o >= v.byteLength) {
+    warnShortSnapshot();
+    return null;
+  }
+  const spectate = v.getUint8(o); o += 1;
 
   return {
     tick, ack, you, timeLeft, scoreA, scoreB, eventBits, fogRadius, weather, round,
     vel, onGround, charge, focus, abilityCooldown, ammo, reload,
-    players, shimmers, cinders, pickups, coreState, corePos, coreCarrier, terminalIndex,
+    players, shimmers, cinders, pickups, cores, terminalIndex, spectate,
     received: performance.now(),
   };
+}
+
+let warnedShort = false;
+function warnShortSnapshot() {
+  if (warnedShort) return;
+  warnedShort = true;
+  console.error(
+    "TICK: snapshot is shorter than this client expects — the server is " +
+      "running older code than the browser bundle. Rebuild and restart it " +
+      "(./run.sh), or `cargo build --release -p tick-server`.",
+  );
 }
 
 function clamp(v: number, lo: number, hi: number) {

@@ -70,7 +70,7 @@ impl Bot {
                 continue;
             }
             let dir = to.normalized();
-            let (t, _) = movement::trace_world(eye, dir, dist, &w.map.brushes);
+            let t = movement::trace_world(eye, dir, dist, &w.map.brushes).t;
             if t < dist - 0.4 {
                 continue;
             }
@@ -170,8 +170,20 @@ impl Bot {
                     c.z + self.rng.next_signed() * w.map.bounds.max.z * 0.6,
                 );
             }
+            // Head for the nearest live, unheld core; with Twin Core running
+            // that keeps the two teams from stacking on the same one.
             goal = match w.cfg_mode {
-                Mode::Uplink if w.core_active => w.core_pos,
+                Mode::Uplink => w
+                    .cores
+                    .iter()
+                    .filter(|c| c.active && c.carrier.is_none())
+                    .min_by(|a, b| {
+                        let da = a.pos.sub(me.mv.pos).len();
+                        let db = b.pos.sub(me.mv.pos).len();
+                        da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
+                    })
+                    .map(|c| c.pos)
+                    .unwrap_or(self.wander),
                 _ => self.wander,
             };
             if me.carrying_core {
@@ -195,7 +207,7 @@ impl Bot {
             let side = right.x * want.x + right.z * want.z;
 
             let probe = me.mv.pos.add(v3(0.0, 0.6, 0.0));
-            let (clear, _) = movement::trace_world(probe, want, 2.0, &w.map.brushes);
+            let clear = movement::trace_world(probe, want, 2.0, &w.map.brushes).t;
             self.strafe_timer -= DT;
             if clear < 1.6 && self.strafe_timer <= 0.0 {
                 self.strafe_timer = 0.6;

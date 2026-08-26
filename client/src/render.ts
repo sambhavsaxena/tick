@@ -192,6 +192,13 @@ export class Renderer {
   readonly canvas: HTMLCanvasElement;
 
   private mapGroup = new THREE.Group();
+  /**
+   * Every mesh drawn for a given brush index, so a brush that slides can take
+   * its dressing with it and a pane that is shot out can take its frame.
+   */
+  private brushParts = new Map<number, THREE.Object3D[]>();
+  /** Last known centre per brush, to detect movement without storing brushes. */
+  private brushCenters = new Map<number, THREE.Vector3>();
   private avatars = new Map<number, THREE.Group>();
   private tracers: { mesh: THREE.Mesh; life: number; ttl: number }[] = [];
   private impacts: { mesh: THREE.Mesh; life: number }[] = [];
@@ -219,6 +226,8 @@ export class Renderer {
   private viewBob = 0;
   /** While true, update() presents nothing new: the death backdrop. */
   frozen = false;
+  /** Hides the first-person weapon — nobody holds a gun in someone else's view. */
+  hideViewmodel = false;
   /** Lazily built scene for the death screen's killer portrait. */
   private portrait: {
     renderer: THREE.WebGLRenderer;
@@ -431,11 +440,20 @@ export class Renderer {
     });
     const frameMat = new THREE.MeshLambertMaterial({ color: 0x3a424b, map: surface("metal") });
 
+    // Everything drawn for a given brush, so the meshes can be moved when the
+    // brush moves and dropped when it is destroyed.
+    this.brushParts.clear();
     let ex = 10;
     let ez = 10;
-    let brushIndex = 0;
+    let brushIndex = -1;
     for (const b of brushes) {
       brushIndex++;
+      const parts: THREE.Object3D[] = [];
+      this.brushParts.set(brushIndex, parts);
+      const add = (o: THREE.Object3D) => {
+        parts.push(o);
+        this.mapGroup.add(o);
+      };
       const sx = b.max[0] - b.min[0];
       const sy = b.max[1] - b.min[1];
       const sz = b.max[2] - b.min[2];
@@ -463,7 +481,7 @@ export class Renderer {
         trunk.position.set(cx, cy, cz);
         trunk.castShadow = true;
         trunk.receiveShadow = true;
-        this.mapGroup.add(trunk);
+        add(trunk);
         const blobs: [number, number, number, number][] = [
           [0, 1.15, 0, 1.35],
           [0.7, 0.55, 0.4, 0.95],
@@ -477,7 +495,7 @@ export class Renderer {
           blob.position.set(cx + ox, b.max[1] + oy, cz + oz);
           blob.rotation.set(k * 0.9, brushIndex * 0.7, 0);
           blob.castShadow = true;
-          this.mapGroup.add(blob);
+          add(blob);
         });
         continue;
       }
@@ -492,7 +510,7 @@ export class Renderer {
         rock.rotation.y = brushIndex * 1.7;
         rock.castShadow = true;
         rock.receiveShadow = true;
-        this.mapGroup.add(rock);
+        add(rock);
         continue;
       }
 
@@ -511,7 +529,7 @@ export class Renderer {
         mesh.castShadow = !isFloor;
         mesh.receiveShadow = true;
       }
-      this.mapGroup.add(mesh);
+      add(mesh);
 
       // Glass panes get a slim frame so a pane reads as architecture, not a
       // rendering artifact.
@@ -520,7 +538,7 @@ export class Renderer {
         const frame = (w: number, h: number, d: number, px: number, py: number, pz: number) => {
           const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), frameMat);
           m.position.set(px, py, pz);
-          this.mapGroup.add(m);
+          add(m);
         };
         if (alongX) {
           frame(sx + 0.12, 0.1, sz + 0.1, cx, b.max[1] + 0.05, cz);
@@ -544,10 +562,21 @@ export class Renderer {
           new THREE.MeshBasicMaterial({ color: 0x2b3138 }),
         );
         cap.position.set(cx, b.max[1] + 0.03, cz);
-        this.mapGroup.add(cap);
+        add(cap);
       }
     }
     this.mapExtent = { x: ex, z: ez };
+    this.brushCenters.clear();
+    for (const [i, b] of brushes.entries()) {
+      this.brushCenters.set(
+        i,
+        new THREE.Vector3(
+          (b.min[0] + b.max[0]) / 2,
+          (b.min[1] + b.max[1]) / 2,
+          (b.min[2] + b.max[2]) / 2,
+        ),
+      );
+    }
 
     this.buildGroundDetail();
     this.buildWallDetail();
@@ -555,6 +584,41 @@ export class Renderer {
     this.buildNeon();
     this.buildRain();
     this.setWeather(weather);
+  }
+
+  /**
+   * Follow the collision geometry after it changes.
+   *
+   * The simulation is the authority on where a brush is, so rather than
+   * animating meshes on their own clock the renderer just re-reads the
+   * brushes and shifts its meshes by the difference. Brushes that did not
+   * move cost one vector comparison; a broken pane takes its frame with it.
+   */
+  syncGeometry(view: Float32Array, count: number) {
+    for (let i = 0; i < count; i++) {
+      const parts = this.brushParts.get(i);
+      if (!parts || parts.length === 0) continue;
+      const o = i * 7;
+
+      // Flag bit 4 is "broken": the pane and its frame come out of the scene.
+      if ((view[o + 6] & 4) === 4) {
+        for (const p of parts) this.mapGroup.remove(p);
+        parts.length = 0;
+        continue;
+      }
+
+      const was = this.brushCenters.get(i);
+      if (!was) continue;
+      const cx = (view[o] + view[o + 3]) / 2;
+      const cy = (view[o + 1] + view[o + 4]) / 2;
+      const cz = (view[o + 2] + view[o + 5]) / 2;
+      const dx = cx - was.x;
+      const dy = cy - was.y;
+      const dz = cz - was.z;
+      if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4 && Math.abs(dz) < 1e-4) continue;
+      for (const p of parts) p.position.set(p.position.x + dx, p.position.y + dy, p.position.z + dz);
+      was.set(cx, cy, cz);
+    }
   }
 
   /**
@@ -1121,12 +1185,15 @@ export class Renderer {
       mesh.rotation.y = performance.now() * 0.001;
       this.propGroup.add(mesh);
     }
-    if (snap.coreState === 1) {
+    // A loose core is drawn where it lies; a carried one rides its carrier and
+    // is already visible as that player's tint, so it is not drawn twice.
+    for (const c of snap.cores) {
+      if (c.state !== 1) continue;
       const core = new THREE.Mesh(
         new THREE.OctahedronGeometry(0.45),
         new THREE.MeshBasicMaterial({ color: 0x7cf7ff }),
       );
-      core.position.set(snap.corePos[0], snap.corePos[1] + 0.5, snap.corePos[2]);
+      core.position.set(c.pos[0], c.pos[1] + 0.5, c.pos[2]);
       core.rotation.y = performance.now() * 0.002;
       this.propGroup.add(core);
     }
@@ -1237,7 +1304,8 @@ export class Renderer {
       this.camera.updateProjectionMatrix();
     }
     this.viewmodel.position.set(0.22 - ads * 0.22, -0.18 + ads * 0.09 - bob * 2, -0.42 - ads * 0.1);
-    this.viewmodel.visible = ads < (this.weapon === 1 ? 0.5 : 0.85);
+    this.viewmodel.visible =
+      !this.hideViewmodel && ads < (this.weapon === 1 ? 0.5 : 0.85);
 
     if (this.rain && this.rain.visible) {
       const pos = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;

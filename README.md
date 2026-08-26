@@ -72,9 +72,36 @@ the client reports how far behind it is rendering with every input packet, and
 the server rewinds other players by exactly that much, clamped to 200 ms.
 Input packets carry the last three inputs, so a dropped packet costs nothing.
 
-Transport is WebSocket today. The design calls for WebTransport over HTTP/3
-with unreliable datagrams as the primary path and WebSocket as the fallback;
-the fallback shipped first deliberately, so it is never a bolt-on.
+**Why WebSocket.** Transport is WebSocket, and that is a decision rather than
+a gap. WebSocket runs over TCP, so a lost packet stalls everything behind it
+until it is retransmitted — the head-of-line blocking that unreliable
+datagrams exist to avoid. That cost is real, and it is one this game already
+pays for: input packets carry the last three inputs, so a dropped one is
+re-delivered by the next before anyone notices, and snapshots are absolute
+state rather than deltas, so a late one is simply superseded. The protocol was
+built to tolerate loss regardless of what the transport promises, which is
+what makes TCP survivable at 32 Hz on a small snapshot.
+
+What WebTransport would buy is the tail: on a genuinely lossy connection,
+TCP's retransmit turns one dropped snapshot into a visible hitch, where a
+datagram transport would just skip it. That matters at scale and on mobile
+networks; it does not matter enough, yet, to run an HTTP/3 stack, a second
+code path, and a fallback that must stay tested. It stays worth doing when
+there are real players on real networks to measure — and the fallback is
+already the thing that shipped, so it will never be a bolt-on.
+
+This is also the ordinary answer for browser games. Anything that needs
+reliable ordering — lobbies, matchmaking, turn-based and most real-time games
+— uses WebSocket, because until recently it was the only bidirectional
+transport a browser had. Games that genuinely could not tolerate TCP either
+shipped as native clients or used WebRTC data channels in unreliable mode,
+which works but drags in ICE, STUN/TURN and a signalling server, and is
+markedly more work to operate than a socket. WebTransport is the modern
+answer to exactly that problem and is now broadly available in Chromium and
+Firefox, with Safari the usual laggard — which is precisely why a WebSocket
+fallback remains mandatory even after WebTransport lands. Plain HTTP is not
+in the running for either: it has no server push, and long-polling around
+that is worse than the problem.
 
 **Anti-cheat by omission.** The server runs a visibility pass per player per
 snapshot and does not transmit the position of an enemy you could not see.
@@ -104,6 +131,17 @@ hand-packed binary. Layouts live in `crates/tick-server/src/proto.rs` and
   Vane (Softstep, Blink), Echo (Tremor, Pulse), Kiln (Fireproof, Cinderline).
 - **Four maps** — Vault, Depot, Terrace, Substation, built from collision
   brushes with thin cover and glass.
+- **Level geometry that moves and breaks.** Terrace's atrium panes shatter
+  permanently when shot, so the glass box teams fought around in the first
+  minute is open ground by the third. Depot's inner containers ride cranes and
+  Substation's shutters rise and fall, both on a fixed cycle: position is a
+  pure function of match time, which means the server and every client derive
+  it from the same clock with nothing on the wire, and a container is in the
+  same place for the player walking into it as for the bullet passing over it.
+- **The killcam.** Die and the camera moves to whoever killed you and stays
+  there until you respawn. If they die too, it follows the chain to whoever
+  killed *them*. The server resolves visibility from the spectated player's
+  eye, so you see what they see and nothing more.
 - **Three weather conditions** with real gameplay deltas: sight range feeds
   both the renderer's fog and the bots' perception, so Night genuinely blinds
   everyone.
@@ -119,10 +157,12 @@ hand-packed binary. Layouts live in `crates/tick-server/src/proto.rs` and
   and chest plate, Vane's hood and scarf, Echo's lit visor band and antenna,
   Kiln's pauldrons and ember line. The head stays a distinct volume because it
   is a distinct hitbox.
-- **The Static Event system** — ten events, seeded at match start so the
+- **The Static Event system** — twelve events, seeded at match start so the
   server can never invent one in reaction to the score, five-second telegraph,
   45-second minimum spacing, symmetric or underdog-tilted, and Overtime Coin
-  closing every match.
+  closing every match. Two are mode-locked: Twin Core puts a second core on
+  the field in Uplink, and Pinhead makes body shots do nothing at all in
+  Headhunt.
 - **The precision economy** — the full bonus table (Clean, Surgical, Longshot,
   Blindside, Duel, Rescue, First Blood), Precision Charge spent on Focus, and
   Aim Rating on the results screen with a rolling delta against your last 20.
@@ -146,18 +186,18 @@ hand-packed binary. Layouts live in `crates/tick-server/src/proto.rs` and
 
 Named explicitly so the gap is not mistaken for a bug:
 
-- WebTransport / HTTP/3. WebSocket only for now.
-- Deterministic replay capture and sharing, and the daily Precision Report.
-- Free-fly ghost spectating in Last Light. Ghost pings work; the dead player's
-  camera stays where they fell rather than flying.
-- Breakable atrium glass on Terrace, and the moving containers on Depot,
-  the floodlight cycle on Vault, and the shutter cycle on Substation. The
-  geometry is there; the dynamic element is not yet driven. Glass currently
-  behaves as thin cover: you can shoot through it, not walk through it.
-- Twin Core (Uplink) and Pinhead (Headhunt) mode events.
+- WebTransport / HTTP/3. WebSocket only, and deliberately so — see
+  **Why WebSocket** below.
 - Cosmetics and accounts. Play is guest-only; the server assigns a callsign
   (a dictionary pair plus a four-digit connection tag) and you cannot change it.
-- Skill-based matchmaking. The queue is first-come, with bot fill.
+- Vault's floodlight cycle. Depot's cranes, Substation's shutters and
+  Terrace's breakable glass are all live; Vault is the one map whose dynamic
+  element is still only decoration.
+
+Deliberately out of scope, so nobody builds them by accident: deterministic
+replay capture and sharing, the daily Precision Report, free-fly ghost
+spectating, and skill-based matchmaking. Dead players get the killcam instead
+of a free camera, and the queue is first-come with bot fill.
 
 ## Tuning
 

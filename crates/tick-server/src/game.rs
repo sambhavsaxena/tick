@@ -362,7 +362,16 @@ fn compute_visibility(
 ) -> [bool; MAX_PLAYERS] {
     let mut out = [false; MAX_PLAYERS];
     let me = &w.players[recipient as usize];
-    let eye = me.eye();
+    // While dead, you are looking through your killer's eyes, so visibility is
+    // resolved from where they are standing rather than from where you fell.
+    // This is the one place a player is shown something they could not see
+    // themselves, and it is bounded: only what the person who killed you can
+    // already see, only until you respawn.
+    let viewer = w
+        .spectate_target(recipient)
+        .map(|s| &w.players[s as usize])
+        .unwrap_or(me);
+    let eye = viewer.eye();
     let sight = w.weather.sight_range();
     let blackout = w.event_active(StaticEvent::Blackout);
     let range = if blackout { sight.min(25.0) } else { sight };
@@ -391,7 +400,7 @@ fn compute_visibility(
         if !p.alive {
             continue;
         }
-        let to = p.mv.pos.sub(me.mv.pos);
+        let to = p.mv.pos.sub(viewer.mv.pos);
         let dist = to.len();
         if dist < ALWAYS_VISIBLE_RADIUS {
             out[i] = true;
@@ -409,7 +418,7 @@ fn compute_visibility(
             let seen = targets.iter().any(|t| {
                 let d = t.sub(eye);
                 let len = d.len();
-                let (hit, _) = movement::trace_world(eye, d.normalized(), len, &w.map.brushes);
+                let hit = movement::trace_world(eye, d.normalized(), len, &w.map.brushes).t;
                 hit >= len - 0.3
             });
             if seen {
