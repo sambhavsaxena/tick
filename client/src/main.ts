@@ -54,6 +54,10 @@ const queueWait = document.getElementById("queueWait") as HTMLElement;
 const queueTimer = document.getElementById("queueTimer") as HTMLElement;
 const respawnWait = document.getElementById("respawnWait") as HTMLElement;
 const respawnCount = document.getElementById("respawnCount") as HTMLElement;
+const killerCard = document.getElementById("killerCard") as HTMLElement;
+const killerView = document.getElementById("killerView") as HTMLCanvasElement;
+const killerName = document.getElementById("killerName") as HTMLElement;
+const killerKit = document.getElementById("killerKit") as HTMLElement;
 
 const renderer = new Renderer(canvas);
 const hud = new Hud();
@@ -91,6 +95,8 @@ let queuedSince = 0;
 let respawnAt = 0;
 /** Previous frame's buttons, for melee key edge detection. */
 let prevButtons = 0;
+/** Who killed us last, for the death screen's portrait. */
+let lastKiller: { slot: number; weapon: number; headshot: boolean } | null = null;
 /** Respawn delay per mode, mirroring Mode::respawn_delay in the sim. */
 const RESPAWN_DELAY = [3, 2, 4, Infinity];
 /** Where our last landed shot hit, for anchoring damage numbers. */
@@ -191,6 +197,7 @@ function enterDeath() {
   isDead = true;
   renderer.frozen = true;
   input.releaseLock();
+  showKillerCard();
   const hint = document.getElementById("deathHint") as HTMLElement;
   if (myMode === 3) {
     deathTitle.textContent = "Eliminated";
@@ -211,9 +218,28 @@ function enterDeath() {
   deathOverlay.classList.remove("hidden");
 }
 
+/**
+ * Name the player who got you and show their character, so a death answers
+ * "what beat me" rather than only "you died". A death with no attacker — the
+ * fog wall, a fall — leaves the card off.
+ */
+function showKillerCard() {
+  const k = lastKiller;
+  const who = k ? roster[k.slot] : undefined;
+  killerCard.classList.toggle("hidden", !who);
+  if (!k || !who) return;
+  const guns = ["Sting", "Ridge", "Maul", "Arc", "Tack", "Lance", "Blade"];
+  const chars = ["Ward", "Vane", "Echo", "Kiln"];
+  killerName.textContent = who.name;
+  killerKit.textContent =
+    `${chars[who.character]} · ${guns[k.weapon] ?? ""}${k.headshot ? " · headshot" : ""}`;
+}
+
 function leaveDeath() {
   isDead = false;
+  lastKiller = null;
   renderer.frozen = false;
+  killerCard.classList.add("hidden");
   deathOverlay.classList.add("hidden");
   if (phase === "match") input.requestLock();
 }
@@ -260,7 +286,7 @@ function onJson(msg: any) {
   switch (msg.t) {
     case "welcome": {
       const note = document.getElementById("callsignNote");
-      if (note) note.textContent = `Callsign · ${msg.name}`;
+      if (note) note.textContent = `You are ${msg.name}`;
       break;
     }
     case "queued":
@@ -315,8 +341,9 @@ function showSpawnCard(msg: any) {
   (document.getElementById("draftWeapon") as HTMLElement).textContent = guns[myWeapon];
   (document.getElementById("draftMap") as HTMLElement).textContent = msg.mapName;
   (document.getElementById("draftWeather") as HTMLElement).textContent = msg.weatherName;
+  const secs = Math.round(msg.duration ?? 240);
   (document.getElementById("draftMode") as HTMLElement).textContent =
-    `${msg.modeName} · first to ${msg.scoreTarget}`;
+    `${msg.modeName} · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} on the clock`;
   spawnCard.classList.remove("hidden");
   window.setTimeout(() => spawnCard.classList.add("hidden"), 2000);
 }
@@ -366,6 +393,9 @@ function handleEvent(e: any) {
       break;
     case "kill": {
       const mine = e.attacker === mySlot;
+      if (e.victim === mySlot && e.attacker !== mySlot) {
+        lastKiller = { slot: e.attacker, weapon: e.weapon, headshot: e.headshot };
+      }
       hud.killRow(nameOf(e.attacker), nameOf(e.victim), e.weapon, e.headshot, mine);
       if (mine) {
         const labels = (e.bonuses as { label: string; points: number }[])
@@ -533,11 +563,17 @@ function frame(now: number) {
     queueTimer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   }
 
-  if (isDead && myMode !== 3) {
-    // Respawn countdown; once the delay elapses the server decides, so the
-    // readout switches to a beat rather than a stale zero.
-    const left = (respawnAt - now) / 1000;
-    respawnCount.textContent = left > 0 ? String(Math.ceil(left)) : "…";
+  if (isDead) {
+    if (myMode !== 3) {
+      // Respawn countdown; once the delay elapses the server decides, so the
+      // readout switches to a beat rather than a stale zero.
+      const left = (respawnAt - now) / 1000;
+      respawnCount.textContent = left > 0 ? String(Math.ceil(left)) : "…";
+    }
+    if (lastKiller) {
+      const who = roster[lastKiller.slot];
+      if (who) renderer.portraitFrame(killerView, who.character, who.team, dt);
+    }
   }
 
   if (phase === "standby") {

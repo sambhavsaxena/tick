@@ -70,10 +70,14 @@ const CALLSIGN_NOUNS: [&str; 24] = [
     "Hornet", "Stoat", "Gull", "Adder", "Bison", "Swift",
 ];
 
-fn random_callsign(rng: &mut Rng) -> String {
+/// The dictionary is only 24 x 24 pairs, so on a busy server two people would
+/// share a callsign long before the seats ran out. The connection id is
+/// appended as a four-digit tag, which is unique for the first ten thousand
+/// connections and distinguishing well past that.
+fn random_callsign(rng: &mut Rng, id: u64) -> String {
     let a = CALLSIGN_ADJECTIVES[rng.next_u32(CALLSIGN_ADJECTIVES.len() as u32) as usize];
     let n = CALLSIGN_NOUNS[rng.next_u32(CALLSIGN_NOUNS.len() as u32) as usize];
-    format!("{a} {n}")
+    format!("{a} {n} {:04}", id % 10_000)
 }
 
 fn now_seed() -> u64 {
@@ -154,7 +158,7 @@ async fn connection(socket: WebSocket, hub: Arc<Hub>) {
     });
 
     let link: LinkCell = Arc::new(Mutex::new(None));
-    let name = { random_callsign(&mut hub.rng.lock().unwrap()) };
+    let name = { random_callsign(&mut hub.rng.lock().unwrap(), id) };
 
     let _ = out_tx
         .send(ToClient::Json(

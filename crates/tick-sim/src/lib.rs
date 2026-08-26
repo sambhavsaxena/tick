@@ -1968,10 +1968,12 @@ impl World {
             .count()
     }
 
+    /// The clock is the only thing that ends a match. Score decides who won
+    /// when it runs out, but no lead is ever large enough to end one early:
+    /// every match is worth the same four minutes of your time, and a team
+    /// that is behind always has the whole clock to come back.
     fn check_end(&mut self) {
-        let target = self.cfg_mode.score_target();
-        let hit_target = self.team_score[0] >= target || self.team_score[1] >= target;
-        if hit_target || self.time_left <= 0.0 {
+        if self.time_left <= 0.0 {
             self.finished = true;
             self.winner = if self.team_score[0] > self.team_score[1] {
                 0

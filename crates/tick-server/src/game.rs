@@ -142,7 +142,6 @@ async fn run(spec: MatchSpec, mut rx: mpsc::Receiver<ToMatch>) {
             "seed": spec.seed.to_string(),
             "you": i as u8,
             "duration": spec.mode.duration(),
-            "scoreTarget": spec.mode.score_target(),
             "players": roster,
         })
         .to_string();

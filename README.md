@@ -89,12 +89,13 @@ hand-packed binary. Layouts live in `crates/tick-server/src/proto.rs` and
 
 ## What is implemented
 
-- **Four modes** — Skirmish (points, not kills, plus the team precision
-  multiplier and the 2:30 Bounty), Headhunt (body damage staggers to 1 HP,
-  only head shots and melee finish), Uplink (one core, carrier visible through
-  walls to everyone, terminal rotates after each bank), Last Light (one life
-  per round, closing fog wall, one ghost ping per dead player per round,
-  Second Wind in round four).
+- **Four modes**, each with its own clock — Skirmish (points, not kills, plus
+  the team precision multiplier and the 2:30 Bounty), Headhunt (body damage
+  staggers to 1 HP, only head shots and melee finish), Uplink (one core,
+  carrier visible through walls to everyone, terminal rotates after each
+  bank), Last Light (one life per round, closing fog wall, one ghost ping per
+  dead player per round, Second Wind in round four; rounds keep running until
+  the clock expires, and the most round wins takes it).
 - **Four weapons** — Sting, Ridge, Maul, Arc, on the design's damage and
   time-to-kill tables, plus the universal Tack sidearm and the airdrop-only
   Lance. Arc fires travelling projectiles that penetrate thin cover at half
@@ -133,8 +134,13 @@ hand-packed binary. Layouts live in `crates/tick-server/src/proto.rs` and
   decays; the two long rifles add delayed, muffled echoes so a Ridge shot
   sounds like it crossed the map. Melee has its own swing. Still no samples.
 - **Waiting always shows progress** — the queue runs a spinner and an elapsed
-  clock, and death runs a spinner and a respawn countdown, so no screen in the
-  game can be mistaken for a hang.
+  clock, death runs a respawn countdown, and the death screen names the player
+  who got you and shows their character turning slowly beside their kit, so no
+  screen in the game can be mistaken for a hang.
+- **The clock is the only thing that ends a match.** Score decides who won; it
+  never decides when. No lead is large enough to cut a match short, so every
+  match is worth the same four minutes and a team that is behind always has
+  the whole clock to come back.
 
 ## What is not implemented yet
 
@@ -149,7 +155,8 @@ Named explicitly so the gap is not mistaken for a bug:
   geometry is there; the dynamic element is not yet driven. Glass currently
   behaves as thin cover: you can shoot through it, not walk through it.
 - Twin Core (Uplink) and Pinhead (Headhunt) mode events.
-- Cosmetics, callsigns, accounts. Play is guest-only.
+- Cosmetics and accounts. Play is guest-only; the server assigns a callsign
+  (a dictionary pair plus a four-digit connection tag) and you cannot change it.
 - Skill-based matchmaking. The queue is first-come, with bot fill.
 
 ## Tuning

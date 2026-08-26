@@ -71,21 +71,21 @@
           <span id="queueTimer">0:00</span>
         </div>
         <div id="queueState"></div>
-        <ul class="controls">
-          <li><b>WASD</b> move</li>
-          <li><b>Shift</b> sprint</li>
-          <li><b>Space</b> jump</li>
-          <li><b>Ctrl</b> crouch</li>
-          <li><b>Mouse 1</b> fire</li>
-          <li><b>Mouse 2</b> aim</li>
-          <li><b>Q</b> ability</li>
-          <li><b>Aim + Q</b> spend Focus</li>
-          <li><b>R</b> reload</li>
-          <li><b>V</b> melee</li>
-          <li><b>Esc Esc</b> standby</li>
-        </ul>
         <p class="footnote">Body kill 100. Clean long-range headshot 325. That ratio is the game.</p>
       </div>
+      <ul class="controls">
+        <li><b>WASD</b> move</li>
+        <li><b>Shift</b> sprint</li>
+        <li><b>Space</b> jump</li>
+        <li><b>Ctrl</b> crouch</li>
+        <li><b>Mouse 1</b> fire</li>
+        <li><b>Mouse 2</b> aim</li>
+        <li><b>Q</b> ability</li>
+        <li><b>Aim + Q</b> Focus</li>
+        <li><b>R</b> reload</li>
+        <li><b>V</b> melee</li>
+        <li><b>Esc Esc</b> standby</li>
+      </ul>
     </div>
 
     <!-- Two second spawn card -->
@@ -121,11 +121,15 @@
     <!-- Death: frozen backdrop behind, respawn loadout in front -->
     <div id="deathOverlay" class="hidden">
       <div class="deathInner">
-        <p id="deathTitle">Respawning</p>
-        <div id="respawnWait">
-          <div class="spinner"></div>
-          <span id="respawnCount"></span>
+        <div id="killerCard" class="hidden">
+          <canvas id="killerView" width="160" height="200"></canvas>
+          <div class="killerText">
+            <span id="killerName"></span>
+            <small id="killerKit"></small>
+          </div>
         </div>
+        <p id="deathTitle">Respawning</p>
+        <div id="respawnWait"><span id="respawnCount"></span></div>
         <div id="loadoutRow">
           <button class="loadoutBtn" data-w="0"><b>1</b> Sting <small>AR</small></button>
           <button class="loadoutBtn" data-w="1"><b>2</b> Ridge <small>Sniper</small></button>

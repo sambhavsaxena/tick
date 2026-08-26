@@ -257,6 +257,9 @@ html, body {
   z-index: 10;
 }
 
+/* The bottom padding reserves the control strip's row, so centred content
+   rises above it instead of colliding with it on a short window. */
+#lobby { padding-bottom: 3rem; }
 .lobbyInner { width: min(48rem, 92vw); text-align: center; }
 #lobby h1 {
   font-family: var(--mono);
@@ -323,18 +326,29 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 }
 #queueWait .spinner { margin: 0; width: 18px; height: 18px; }
 
+/* One line pinned to the bottom of the lobby. It scrolls rather than wraps,
+   so a narrow window shortens the strip instead of stealing a second row. */
 .controls {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: center;
-  gap: 0.35rem 1.1rem;
+  gap: 1.1rem;
   list-style: none;
-  padding: 0;
-  margin: 2.5rem 0 0;
+  padding: 0.75rem 1.25rem;
+  margin: 0;
   font-family: var(--mono);
   font-size: 0.7rem;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: 1px solid var(--line);
+  background: rgba(8, 11, 15, 0.6);
   color: var(--dim);
 }
+.controls::-webkit-scrollbar { display: none; }
+.controls li { flex: 0 0 auto; }
 .controls b { color: var(--ink); font-weight: 500; }
 .footnote {
   font-family: var(--mono);
@@ -477,23 +491,47 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 .deathInner { text-align: center; font-family: var(--sans); color: #c8d2dc; }
 #deathTitle { font-family: var(--mono); font-size: 1.3rem; margin: 0 0 1rem; }
 
-/* Respawn wait: spinner + countdown, so death never reads as a hang. */
+/* Respawn wait: a countdown and nothing else, so the one thing that is
+   changing is the one thing on screen. */
 #respawnWait {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 1.1rem;
+}
+#respawnCount {
+  font-family: var(--mono);
+  font-size: 2.6rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+#respawnWait.hidden { display: none; }
+
+/* Who killed you: their character, posed and lit, next to their callsign. */
+#killerCard {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.7rem;
-  margin: 0 0 1.1rem;
+  gap: 1rem;
+  margin: 0 0 1.2rem;
 }
-#respawnWait .spinner { margin: 0; width: 22px; height: 22px; border-top-color: var(--ally); }
-#respawnCount {
+#killerView { width: 160px; height: 200px; }
+.killerText { text-align: left; }
+#killerName {
+  display: block;
   font-family: var(--mono);
-  font-size: 2.2rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-  min-width: 1.6rem;
+  font-size: 1.15rem;
+  color: var(--enemy);
 }
-#respawnWait.hidden { display: none; }
+#killerKit {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-top: 0.25rem;
+}
 #deathHint { display: block; margin-top: 0.9rem; font-size: 0.72rem; color: #8b949e; }
 #loadoutRow { display: flex; gap: 0.6rem; justify-content: center; }
 .loadoutBtn {

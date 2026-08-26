@@ -366,15 +366,6 @@ impl Mode {
             Mode::LastLight => f32::INFINITY,
         }
     }
-    /// Team score that ends the match early.
-    pub fn score_target(self) -> i32 {
-        match self {
-            Mode::Skirmish => 3000,
-            Mode::Headhunt => 30,
-            Mode::Uplink => 4,
-            Mode::LastLight => 4,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

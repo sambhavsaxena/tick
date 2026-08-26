@@ -35,7 +35,7 @@ Everything tunable is in **`crates/tick-sim/src/defs.rs`**:
 | Movement feel | `WALK_SPEED`…`STEP_HEIGHT`, `SPRINT_FIRE_DELAY` |
 | Weapon damage / fire rate / falloff | `Weapon::stats` → `WeaponStats` |
 | Character passives and cooldowns | `Character::armor`, `speed_mult`, `reload_mult`, `ability_cooldown` |
-| Mode length, respawn delay, score target | `Mode::duration`, `respawn_delay`, `score_target` |
+| Mode length and respawn delay | `Mode::duration`, `Mode::respawn_delay` |
 | Weather sight range and audio masking | `Weather::sight_range`, `audio_mult` |
 | Map geometry, spawns, Uplink terminals | `load_map` (one arm per map), helpers `solid` / `thin` / `glass` / `shell` |
 
@@ -50,7 +50,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 
 | Mode | Where |
 |---|---|
-| Shared: score cap, clock, match end | `World::check_end`, `Mode::score_target` |
+| Shared: clock, match end | `World::check_end` — the clock is the only thing that ends a match; score decides the winner, never the length. Length is `Mode::duration` |
 | **Skirmish** — points not kills | `World::kill` (points path), `World::team_precision_mult` (headshot streak) |
 | Skirmish Bounty at 2:30 | `World::step_schedule` (fires `StaticEvent::TheMark`) |
 | **Headhunt** — body damage staggers | `World::apply_damage` (the `Mode::Headhunt` branch), stagger recovery in `World::step_players` |
@@ -177,6 +177,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Phase machine (lobby → queued → match → results → standby) | `setPhase` in `main.ts` |
 | Spawn card | `showSpawnCard` in `main.ts`, markup in `client/index.html` |
 | Waiting feedback (queue spinner and clock, respawn countdown) | `#queueWait` / `#respawnWait` in `index.html`, driven in `frame` (`main.ts`) |
+| Killer card on the death screen | `showKillerCard` (`main.ts`) + `Renderer.portraitFrame` — its own small WebGL context, because the main canvas is frozen |
+| Callsign assignment | `random_callsign` in `main.rs` — dictionary pair plus a four-digit connection tag |
 | Aim dot while ADS | `#crosshair.ads` in `style.css`, toggled in `frame` (`main.ts`) |
 | Standby (`Esc Esc`, tab hidden, lost pointer lock) | `enterStandby` / `leaveStandby` in `main.ts` |
 | Pointer lock, key mapping, sensitivity | `client/src/input.ts` (`KEY_BUTTONS`) |
@@ -209,4 +211,4 @@ Tracked here so they are not re-reported as bugs. Full wording in `README.md`.
 - Map dynamic elements: Depot cranes, Vault floodlights, Substation shutters,
   Terrace breakable glass (glass is currently thin cover — shoot through, not walk through)
 - Twin Core (Uplink) and Pinhead (Headhunt) mode events
-- Cosmetics, callsigns, accounts; skill-based matchmaking
+- Cosmetics and accounts; skill-based matchmaking

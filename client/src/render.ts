@@ -219,6 +219,16 @@ export class Renderer {
   private viewBob = 0;
   /** While true, update() presents nothing new: the death backdrop. */
   frozen = false;
+  /** Lazily built scene for the death screen's killer portrait. */
+  private portrait: {
+    renderer: THREE.WebGLRenderer;
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    avatar: THREE.Group | null;
+    character: number;
+    team: number;
+    spin: number;
+  } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -1120,6 +1130,44 @@ export class Renderer {
       core.rotation.y = performance.now() * 0.002;
       this.propGroup.add(core);
     }
+  }
+
+  /**
+   * Draw one character alone on a small canvas, slowly turning: the death
+   * screen's "who got you" card. It runs its own tiny renderer and scene
+   * because the main canvas is frozen as the death backdrop and cannot be
+   * drawn into. Built once per character and reused after that.
+   */
+  portraitFrame(canvas: HTMLCanvasElement, character: number, team: number, dt: number) {
+    if (!this.portrait) {
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(canvas.clientWidth || 160, canvas.clientHeight || 200, false);
+      const scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xc8d8e8, 0x1b2026, 1.5));
+      const key = new THREE.DirectionalLight(0xfff0dc, 2.0);
+      key.position.set(2.5, 4, 3);
+      const rim = new THREE.DirectionalLight(0x7fb0d8, 1.1);
+      rim.position.set(-3, 2, -2.5);
+      scene.add(key, rim);
+      const camera = new THREE.PerspectiveCamera(32, (canvas.clientWidth || 160) / (canvas.clientHeight || 200), 0.1, 20);
+      camera.position.set(0, 1.35, 4.6);
+      camera.lookAt(0, 1.15, 0);
+      this.portrait = { renderer, scene, camera, avatar: null, character: -1, team: -1, spin: 0 };
+    }
+    const p = this.portrait;
+    if (p.character !== character || p.team !== team) {
+      if (p.avatar) p.scene.remove(p.avatar);
+      p.avatar = this.makeAvatar(team, character);
+      p.scene.add(p.avatar);
+      p.character = character;
+      p.team = team;
+      p.spin = -0.5;
+    }
+    // A slow turn, so the silhouette reads from more than one angle.
+    p.spin += dt * 0.7;
+    p.avatar!.rotation.y = Math.sin(p.spin) * 0.6 + Math.PI;
+    p.renderer.render(p.scene, p.camera);
   }
 
   /** Age tracers, impacts and the muzzle flash, retiring the expired ones. */
