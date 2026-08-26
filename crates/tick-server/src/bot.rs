@@ -123,6 +123,15 @@ impl Bot {
             let in_range = dist < effective_range(me.weapon);
             if aligned && in_range && self.reaction <= 0.0 && me.ammo > 0 {
                 btn |= buttons::FIRE;
+                // Deliberately dumb: three out of four trigger pulls are
+                // thrown wide. The offset is sized from the distance so it
+                // always clears a body's half-width no matter the range.
+                if self.rng.next_f32() < 0.75 {
+                    let off = 0.7 / dist.max(2.0) + self.rng.next_f32() * 0.05;
+                    let sign = if self.rng.next_f32() < 0.5 { -1.0 } else { 1.0 };
+                    self.yaw += sign * off;
+                    self.pitch += self.rng.next_signed() * 0.04;
+                }
             }
             if me.ammo == 0 {
                 btn |= buttons::RELOAD;

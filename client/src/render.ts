@@ -82,6 +82,7 @@ export class Renderer {
   private cinderGroup = new THREE.Group();
   private propGroup = new THREE.Group();
   private weather = 0;
+  private weapon = 0;
   private blackout = false;
   private recoilKick = 0;
   private viewBob = 0;
@@ -315,6 +316,7 @@ export class Renderer {
   }
 
   setViewmodel(weapon: number) {
+    this.weapon = weapon;
     this.viewmodel.clear();
     const dark = new THREE.MeshLambertMaterial({ color: 0x2a3138 });
     const accent = new THREE.MeshLambertMaterial({ color: 0x6f7d88 });
@@ -476,13 +478,15 @@ export class Renderer {
     this.camera.rotateY(yaw + Math.PI);
     this.camera.rotateX(pitch + this.recoilKick);
 
-    const targetFov = 95 - ads * 32;
+    // The Ridge aims through a real scope: much deeper zoom, and the HUD
+    // draws the scope mask once the transition is nearly done.
+    const targetFov = this.weapon === 1 ? 95 - ads * 67 : 95 - ads * 32;
     if (Math.abs(this.camera.fov - targetFov) > 0.1) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
       this.camera.updateProjectionMatrix();
     }
     this.viewmodel.position.set(0.22 - ads * 0.22, -0.18 + ads * 0.09 - bob * 2, -0.42 - ads * 0.1);
-    this.viewmodel.visible = ads < 0.85;
+    this.viewmodel.visible = ads < (this.weapon === 1 ? 0.5 : 0.85);
 
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];

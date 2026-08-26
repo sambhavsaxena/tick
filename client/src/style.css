@@ -490,3 +490,43 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
   color: #ffffff;
   background: rgba(63, 208, 192, 0.12);
 }
+
+/* ------------------------------------------------------------ sniper scope */
+
+#scope {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  /* Everything outside the circle goes black. */
+  background: radial-gradient(
+    circle at 50% 50%,
+    transparent 0,
+    transparent min(38vh, 38vw),
+    rgba(0, 0, 0, 0.97) min(40vh, 40vw)
+  );
+}
+.scopeRing {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(76vh, 76vw);
+  height: min(76vh, 76vw);
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(0, 0, 0, 0.85);
+  border-radius: 50%;
+}
+.scopeLine {
+  position: absolute;
+  background: rgba(10, 12, 14, 0.8);
+}
+.scopeLine.h {
+  left: 50%; top: 50%;
+  width: min(76vh, 76vw); height: 1px;
+  transform: translate(-50%, -50%);
+}
+.scopeLine.v {
+  left: 50%; top: 50%;
+  width: 1px; height: min(76vh, 76vw);
+  transform: translate(-50%, -50%);
+}

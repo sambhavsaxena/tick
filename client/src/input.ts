@@ -26,6 +26,8 @@ export class InputState {
   pitch = 0;
   buttons = 0;
   sensitivity = 0.0022;
+  /** ADS sensitivity multiplier; the scope sets it lower than iron sights. */
+  adsSensScale = 0.7;
   locked = false;
 
   /** Two presses of Escape put the game into Standby. */
@@ -131,7 +133,7 @@ export class InputState {
     if (!this.locked) return;
     // Aiming down sights scales sensitivity with the zoom, so muscle memory
     // survives the transition.
-    const scale = (this.buttons & BTN.ADS) !== 0 ? 0.7 : 1.0;
+    const scale = (this.buttons & BTN.ADS) !== 0 ? this.adsSensScale : 1.0;
     this.yaw -= e.movementX * this.sensitivity * scale;
     this.pitch -= e.movementY * this.sensitivity * scale;
     if (this.pitch > 1.55) this.pitch = 1.55;

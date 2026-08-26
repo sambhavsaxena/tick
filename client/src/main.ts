@@ -40,6 +40,8 @@ const LOADOUT_WEAPONS = [0, 1, 4, 6];
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const lobby = document.getElementById("lobby") as HTMLElement;
 const deathOverlay = document.getElementById("deathOverlay") as HTMLElement;
+const scopeOverlay = document.getElementById("scope") as HTMLElement;
+const crosshairEl = document.getElementById("crosshair") as HTMLElement;
 const deathTitle = document.getElementById("deathTitle") as HTMLElement;
 const loadoutRow = document.getElementById("loadoutRow") as HTMLElement;
 const spawnCard = document.getElementById("spawnCard") as HTMLElement;
@@ -525,6 +527,13 @@ function frame(now: number) {
 
     const wantAds = (input.buttons & BTN.ADS) !== 0 ? 1 : 0;
     adsAmount += (wantAds - adsAmount) * Math.min(1, dt * 12);
+
+    // Ridge scope: mask on once the zoom-in is nearly settled, slower mouse
+    // while looking through it so the zoom does not amplify hand motion.
+    const scoped = myWeapon === 1 && adsAmount > 0.8;
+    scopeOverlay.classList.toggle("hidden", !scoped);
+    crosshairEl.classList.toggle("hidden", scoped);
+    input.adsSensScale = myWeapon === 1 ? 0.4 : 0.7;
 
     renderPlayers();
     updateHud();
