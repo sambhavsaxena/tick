@@ -73,7 +73,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Hitscan resolution + lag compensation | `World::resolve_hitscan` |
 | Arc's travelling projectiles + cover penetration | `World::step_projectiles` |
 | Viewmodel shapes | `Renderer.setViewmodel` (`client/src/render.ts`) |
-| Gunshot sound per weapon | `WEAPON_TONE` in `client/src/audio.ts` |
+| Gunshot sound per weapon | `WEAPON_TONE` in `client/src/audio.ts`; layered in `Audio.shot` |
+| Melee swing whoosh | `Audio.swing`, fired on the melee key's rising edge in `main.ts` |
 
 ---
 
@@ -88,6 +89,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Pulse reveals | `World::step_ability` writes `World::revealed_until`; read by `compute_visibility` (`game.rs`) |
 | Ability visuals | `Renderer.syncProps` |
 | Cooldown readout | `Hud.setKit` |
+| Per-character look (Ward's plate, Vane's hood, Echo's antenna, Kiln's pauldrons) | `Renderer.makeAvatar` |
+| Walk cycle | `Renderer.syncPlayers` — limb pivots driven by distance moved |
 
 ---
 
@@ -99,7 +102,12 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Spawn safety (never inside a wall) | `free_spot` / `spot_blocked` in `lib.rs`, plus `World::best_spawn` |
 | Client geometry (same brushes) | `Sim.loadMap` (`client/src/sim.ts`) → `Renderer.buildMap` |
 | Weather gameplay effect | `Weather::sight_range` — feeds bot perception (`bot.rs`) and snapshot culling (`game.rs`) |
-| Weather look (fog, light, rain) | `LOOKS` table + `Renderer.applyLook` (`render.ts`) |
+| Weather look (fog, light, rain, cloud deck) | `LOOKS` table + `Renderer.applyLook` / `buildVista` (`render.ts`) |
+| Surface textures (concrete, wood, ground, rock, metal) | `surface` in `render.ts` — drawn to a canvas at runtime, no assets |
+| Texture tiling by world size | `tileBox` — rewrites a box's UVs so a metre is a metre |
+| Grass, pebbles, worn paths on the floor | `Renderer.buildGroundDetail` |
+| Wall skirting and pilasters | `Renderer.buildWallDetail` |
+| Forest, boulders and the far skyline past the walls | `Renderer.buildScenery` |
 
 ---
 
@@ -150,6 +158,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Piece | Where |
 |---|---|
 | HTTP, static files, `/ws` upgrade, `/health` | `crates/tick-server/src/main.rs` |
+| Listen port (`TICK_PORT`, then `PORT`, then 8080) | bottom of `main` in `main.rs` |
 | Per-connection message handling | `connection` in `main.rs` |
 | Queue and bot fill (`BOT_FILL_SECONDS`) | `matchmaker` in `main.rs` |
 | **The Server Draft** (team, character, weapon, map, weather, seed) | `start_match` in `main.rs` |
@@ -167,6 +176,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 |---|---|
 | Phase machine (lobby → queued → match → results → standby) | `setPhase` in `main.ts` |
 | Spawn card | `showSpawnCard` in `main.ts`, markup in `client/index.html` |
+| Waiting feedback (queue spinner and clock, respawn countdown) | `#queueWait` / `#respawnWait` in `index.html`, driven in `frame` (`main.ts`) |
+| Aim dot while ADS | `#crosshair.ads` in `style.css`, toggled in `frame` (`main.ts`) |
 | Standby (`Esc Esc`, tab hidden, lost pointer lock) | `enterStandby` / `leaveStandby` in `main.ts` |
 | Pointer lock, key mapping, sensitivity | `client/src/input.ts` (`KEY_BUTTONS`) |
 | HUD elements | `client/src/hud.ts` + `client/index.html` + `client/src/style.css` |

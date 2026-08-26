@@ -63,6 +63,17 @@ html, body {
 }
 #crosshair.focus i { background: var(--warn); }
 
+/* Aiming (right click): the arms pull in and vanish, and the centre becomes
+   a single bright dot — the precise point the gun resolves to. */
+#crosshair i { transition: opacity 90ms linear, transform 90ms linear; }
+#crosshair.ads i { opacity: 0; transform: scale(0.4); }
+#crosshair.ads b {
+  width: 4px; height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.9), 0 0 1px #000;
+}
+
 #hitmarker {
   position: fixed;
   left: 50%; top: 50%;
@@ -234,17 +245,6 @@ html, body {
   line-height: 1.5;
 }
 
-#deadNotice {
-  position: fixed;
-  left: 50%; top: 44%;
-  transform: translateX(-50%);
-  font-family: var(--mono);
-  font-size: 1.1rem;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--enemy);
-}
-
 /* ---------------------------------------------------------------- lobby */
 
 #lobby, #results, #standby, #spawnCard {
@@ -308,6 +308,20 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
   height: 1.4rem;
   margin-top: 0.9rem;
 }
+
+/* Queue wait: spinner + elapsed clock so the screen never looks frozen. */
+#queueWait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+#queueWait .spinner { margin: 0; width: 18px; height: 18px; }
 
 .controls {
   display: flex;
@@ -462,6 +476,24 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 }
 .deathInner { text-align: center; font-family: var(--sans); color: #c8d2dc; }
 #deathTitle { font-family: var(--mono); font-size: 1.3rem; margin: 0 0 1rem; }
+
+/* Respawn wait: spinner + countdown, so death never reads as a hang. */
+#respawnWait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  margin: 0 0 1.1rem;
+}
+#respawnWait .spinner { margin: 0; width: 22px; height: 22px; border-top-color: var(--ally); }
+#respawnCount {
+  font-family: var(--mono);
+  font-size: 2.2rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  min-width: 1.6rem;
+}
+#respawnWait.hidden { display: none; }
 #deathHint { display: block; margin-top: 0.9rem; font-size: 0.72rem; color: #8b949e; }
 #loadoutRow { display: flex; gap: 0.6rem; justify-content: center; }
 .loadoutBtn {

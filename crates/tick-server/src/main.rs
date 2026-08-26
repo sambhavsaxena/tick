@@ -108,7 +108,9 @@ async fn main() {
         .layer(CorsLayer::permissive())
         .with_state(hub.clone());
 
+    // TICK_PORT wins; PORT is the convention dev harnesses set.
     let port: u16 = std::env::var("TICK_PORT")
+        .or_else(|_| std::env::var("PORT"))
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);

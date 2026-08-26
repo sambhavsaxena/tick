@@ -54,7 +54,6 @@
       </footer>
 
       <div id="netreadout"></div>
-      <div id="deadNotice" class="hidden">Respawning</div>
     </div>
 
     <!-- Lobby -->
@@ -67,6 +66,10 @@
         </p>
         <p class="nameRow" id="callsignNote">Connecting…</p>
         <button id="playButton">Play</button>
+        <div id="queueWait" class="hidden">
+          <div class="spinner"></div>
+          <span id="queueTimer">0:00</span>
+        </div>
         <div id="queueState"></div>
         <ul class="controls">
           <li><b>WASD</b> move</li>
@@ -119,6 +122,10 @@
     <div id="deathOverlay" class="hidden">
       <div class="deathInner">
         <p id="deathTitle">Respawning</p>
+        <div id="respawnWait">
+          <div class="spinner"></div>
+          <span id="respawnCount"></span>
+        </div>
         <div id="loadoutRow">
           <button class="loadoutBtn" data-w="0"><b>1</b> Sting <small>AR</small></button>
           <button class="loadoutBtn" data-w="1"><b>2</b> Ridge <small>Sniper</small></button>

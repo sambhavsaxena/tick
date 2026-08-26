@@ -22,6 +22,8 @@ export interface RenderPlayer {
   yaw: number;
   pitch: number;
   team: number;
+  /** Character index (Ward/Vane/Echo/Kiln) — fixed per player for the match. */
+  character: number;
   alive: boolean;
   crouching: boolean;
   marked: boolean;
@@ -61,6 +63,127 @@ const LOOKS: WeatherLook[] = [
     sun: 0x5d7ba6, sunIntensity: 0.45, ground: 0x1d2530, rain: false,
   },
 ];
+
+// ------------------------------------------------------------------ textures
+//
+// Every surface texture is drawn once into a small canvas at runtime: real
+// material variation without a single downloaded asset. Textures stay
+// grayscale so the existing material colors (and weather ground tints) keep
+// multiplying through unchanged.
+
+const texCache = new Map<string, THREE.CanvasTexture>();
+
+function surface(kind: "concrete" | "wood" | "ground" | "rock" | "metal"): THREE.CanvasTexture {
+  const hit = texCache.get(kind);
+  if (hit) return hit;
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d")!;
+  // The base must be white: a map multiplies the material colour, so any
+  // darker fill would quietly dim every surface in the game.
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, 128, 128);
+
+  const speck = (n: number, size: number, spread: number) => {
+    for (let i = 0; i < n; i++) {
+      const v = (Math.random() - 0.5) * spread;
+      g.fillStyle = v > 0 ? `rgba(255,255,255,${v})` : `rgba(0,0,0,${-v})`;
+      g.fillRect(Math.random() * 128, Math.random() * 128, size, size);
+    }
+  };
+
+  switch (kind) {
+    case "concrete":
+      speck(1200, 2, 0.16);
+      // Faint pour seams and streaks of weathering.
+      g.fillStyle = "rgba(0,0,0,0.10)";
+      for (const y of [31, 63, 95]) g.fillRect(0, y, 128, 1);
+      for (let i = 0; i < 8; i++) {
+        g.fillStyle = `rgba(0,0,0,${0.03 + Math.random() * 0.05})`;
+        const x = Math.random() * 128;
+        g.fillRect(x, 0, 1 + Math.random() * 2, 40 + Math.random() * 88);
+      }
+      break;
+    case "wood":
+      // Plank rows with grain streaks.
+      for (let row = 0; row < 8; row++) {
+        g.fillStyle = `rgba(${row % 2 ? 0 : 255},${row % 2 ? 0 : 255},${row % 2 ? 0 : 255},0.05)`;
+        g.fillRect(0, row * 16, 128, 16);
+        g.fillStyle = "rgba(0,0,0,0.22)";
+        g.fillRect(0, row * 16, 128, 1);
+      }
+      for (let i = 0; i < 60; i++) {
+        g.fillStyle = `rgba(0,0,0,${0.04 + Math.random() * 0.08})`;
+        g.fillRect(Math.random() * 128, Math.random() * 128, 6 + Math.random() * 26, 1);
+      }
+      break;
+    case "ground":
+      // Fine grain only: at the floor's tiling rate anything larger reads as
+      // a smear rather than as texture.
+      speck(2400, 1, 0.18);
+      speck(500, 2, 0.1);
+      break;
+    case "rock":
+      speck(900, 3, 0.2);
+      for (let i = 0; i < 10; i++) {
+        g.strokeStyle = `rgba(0,0,0,${0.08 + Math.random() * 0.1})`;
+        g.beginPath();
+        g.moveTo(Math.random() * 128, Math.random() * 128);
+        g.lineTo(Math.random() * 128, Math.random() * 128);
+        g.stroke();
+      }
+      break;
+    case "metal":
+      speck(400, 1, 0.1);
+      for (let y = 0; y < 128; y += 4) {
+        g.fillStyle = "rgba(255,255,255,0.03)";
+        g.fillRect(0, y, 128, 1);
+      }
+      // Rivet dots along the edges.
+      g.fillStyle = "rgba(0,0,0,0.35)";
+      for (let x = 8; x < 128; x += 24) {
+        g.fillRect(x, 6, 3, 3);
+        g.fillRect(x, 119, 3, 3);
+      }
+      break;
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  texCache.set(kind, tex);
+  return tex;
+}
+
+/**
+ * Retile a box's UVs so its texture repeats every `tile` metres instead of
+ * stretching once across each face. BoxGeometry lays faces out in the order
+ * +X, -X, +Y, -Y, +Z, -Z with four vertices each, and each face's two axes
+ * are known, so the scale is exact and costs no extra texture memory.
+ */
+function tileBox(geo: THREE.BoxGeometry, sx: number, sy: number, sz: number, tile = 2): THREE.BoxGeometry {
+  const uv = geo.getAttribute("uv") as THREE.BufferAttribute;
+  const spans: [number, number][] = [
+    [sz, sy], [sz, sy], // +X, -X
+    [sx, sz], [sx, sz], // +Y, -Y
+    [sx, sy], [sx, sy], // +Z, -Z
+  ];
+  for (let face = 0; face < 6; face++) {
+    const [su, sv] = spans[face];
+    for (let v = 0; v < 4; v++) {
+      const i = face * 4 + v;
+      uv.setXY(i, uv.getX(i) * (su / tile), uv.getY(i) * (sv / tile));
+    }
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
+
+/** Deterministic 0..1 hash for scatter placement. */
+function hash01(i: number, salt: number): number {
+  const x = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
 
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
@@ -219,6 +342,23 @@ export class Renderer {
       path.rotation.z = Math.PI / 2;
       path.position.set(-500, -0.7, 0);
       this.vistaGroup.add(sun, glow, path);
+
+      // A scattered cloud deck: flat discs high overhead, denser and darker
+      // in Rain, sparse and warm-lit in Clear.
+      const cloudColor = this.weather === 1 ? 0x76828e : 0xf2e2ce;
+      const cloudCount = this.weather === 1 ? 16 : 9;
+      for (let i = 0; i < cloudCount; i++) {
+        const cloud = new THREE.Mesh(
+          new THREE.CircleGeometry(90 + hash01(i, 5) * 130, 18),
+          flat(cloudColor, this.weather === 1 ? 0.28 : 0.22),
+        );
+        cloud.rotation.x = Math.PI / 2;
+        const a = hash01(i, 9) * Math.PI * 2;
+        const r = 300 + hash01(i, 13) * 700;
+        cloud.position.set(Math.cos(a) * r, 320 + hash01(i, 21) * 180, Math.sin(a) * r);
+        cloud.scale.x = 1.6 + hash01(i, 33);
+        this.vistaGroup.add(cloud);
+      }
     } else {
       // Black hole low on the +X horizon: a void disc, a hot accretion ring,
       // a faint outer lens, and a sky of stars.
@@ -257,30 +397,43 @@ export class Renderer {
   /** Build the level out of the collision brushes the shared sim handed us. */
   buildMap(brushes: Brush[], weather: number) {
     this.mapGroup.clear();
+    // A new match may seat new characters in old slots: rebuild every avatar.
+    for (const [, g] of this.avatars) this.scene.remove(g);
+    this.avatars.clear();
     const look = LOOKS[weather] ?? LOOKS[0];
 
-    const solidMat = new THREE.MeshLambertMaterial({ color: 0x9aa3aa });
-    const floorMat = new THREE.MeshLambertMaterial({ color: look.ground });
-    const thinMat = new THREE.MeshLambertMaterial({ color: 0xb2895e });
-    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4a32 });
-    const rockMat = new THREE.MeshLambertMaterial({ color: 0x7d8188 });
-    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x4a7a4e });
+    // Three concrete shades so adjacent structures never read as one slab.
+    const solidMats = [0x9aa3aa, 0x8f99a1, 0xa4adb4].map(
+      (color) => new THREE.MeshLambertMaterial({ color, map: surface("concrete") }),
+    );
+    const floorMat = new THREE.MeshLambertMaterial({ color: look.ground, map: surface("ground") });
+    const thinMat = new THREE.MeshLambertMaterial({ color: 0xb2895e, map: surface("wood") });
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4a32, map: surface("wood") });
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x7d8188, map: surface("rock") });
+    const canopyMats = [0x4a7a4e, 0x3e6b44, 0x568a52].map(
+      (color) => new THREE.MeshLambertMaterial({ color }),
+    );
     const glassMat = new THREE.MeshLambertMaterial({
       color: 0xbfe4ea,
       transparent: true,
       opacity: 0.22,
       depthWrite: false,
     });
+    const frameMat = new THREE.MeshLambertMaterial({ color: 0x3a424b, map: surface("metal") });
 
     let ex = 10;
     let ez = 10;
+    let brushIndex = 0;
     for (const b of brushes) {
+      brushIndex++;
       const sx = b.max[0] - b.min[0];
       const sy = b.max[1] - b.min[1];
       const sz = b.max[2] - b.min[2];
       ex = Math.max(ex, Math.abs(b.min[0]), Math.abs(b.max[0]));
       ez = Math.max(ez, Math.abs(b.min[2]), Math.abs(b.max[2]));
-      const geo = new THREE.BoxGeometry(sx, sy, sz);
+      const cx = (b.min[0] + b.max[0]) / 2;
+      const cy = (b.min[1] + b.max[1]) / 2;
+      const cz = (b.min[2] + b.max[2]) / 2;
       const isFloor = sy > 1.5 && b.max[1] <= 0.05;
       // Dress collision boxes by their shape: slim tall boxes are tree
       // trunks (and get a canopy), squat boxes hugging the ground are rocks.
@@ -288,56 +441,225 @@ export class Renderer {
       const isRock =
         !b.thin && !b.glass && !isFloor && b.min[1] <= 0.05 && sy <= 1.2 &&
         sx >= 1.6 && sx <= 4.2 && sz >= 1.6 && sz <= 4.2;
+
+      if (isTrunk) {
+        // A tapered trunk plus a clumped three-blob canopy above head
+        // height: bullets and eyes pass the simulation's checks unchanged,
+        // the silhouette just reads as a real tree.
+        const trunk = new THREE.Mesh(
+          new THREE.CylinderGeometry(sx * 0.32, sx * 0.48, sy, 7),
+          trunkMat,
+        );
+        trunk.position.set(cx, cy, cz);
+        trunk.castShadow = true;
+        trunk.receiveShadow = true;
+        this.mapGroup.add(trunk);
+        const blobs: [number, number, number, number][] = [
+          [0, 1.15, 0, 1.35],
+          [0.7, 0.55, 0.4, 0.95],
+          [-0.6, 0.65, -0.45, 0.85],
+        ];
+        blobs.forEach(([ox, oy, oz, r], k) => {
+          const blob = new THREE.Mesh(
+            new THREE.IcosahedronGeometry(r, 0),
+            canopyMats[(brushIndex + k) % canopyMats.length],
+          );
+          blob.position.set(cx + ox, b.max[1] + oy, cz + oz);
+          blob.rotation.set(k * 0.9, brushIndex * 0.7, 0);
+          blob.castShadow = true;
+          this.mapGroup.add(blob);
+        });
+        continue;
+      }
+
+      if (isRock) {
+        // An irregular boulder mesh sized to the collision box, instead of a
+        // literal box: same footprint, natural silhouette.
+        const r = Math.max(sx, sz) * 0.62;
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rockMat);
+        rock.scale.y = sy / r;
+        rock.position.set(cx, b.min[1] + sy * 0.45, cz);
+        rock.rotation.y = brushIndex * 1.7;
+        rock.castShadow = true;
+        rock.receiveShadow = true;
+        this.mapGroup.add(rock);
+        continue;
+      }
+
       const mat = b.glass
         ? glassMat
         : b.thin
         ? thinMat
-        : isTrunk
-        ? trunkMat
-        : isRock
-        ? rockMat
         : isFloor
         ? floorMat
-        : solidMat;
+        : solidMats[brushIndex % solidMats.length];
+      const geo = new THREE.BoxGeometry(sx, sy, sz);
+      if (!b.glass) tileBox(geo, sx, sy, sz, isFloor ? 4 : 2);
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(
-        (b.min[0] + b.max[0]) / 2,
-        (b.min[1] + b.max[1]) / 2,
-        (b.min[2] + b.max[2]) / 2,
-      );
+      mesh.position.set(cx, cy, cz);
       if (!b.glass) {
         mesh.castShadow = !isFloor;
         mesh.receiveShadow = true;
       }
       this.mapGroup.add(mesh);
 
-      if (isTrunk) {
-        // Purely visual canopy above head height: bullets and eyes pass the
-        // simulation's checks unchanged, the silhouette just reads as a tree.
-        const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 7), canopyMat);
-        canopy.position.set(mesh.position.x, b.max[1] + 1.0, mesh.position.z);
-        canopy.castShadow = true;
-        this.mapGroup.add(canopy);
+      // Glass panes get a slim frame so a pane reads as architecture, not a
+      // rendering artifact.
+      if (b.glass) {
+        const alongX = sx > sz;
+        const frame = (w: number, h: number, d: number, px: number, py: number, pz: number) => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), frameMat);
+          m.position.set(px, py, pz);
+          this.mapGroup.add(m);
+        };
+        if (alongX) {
+          frame(sx + 0.12, 0.1, sz + 0.1, cx, b.max[1] + 0.05, cz);
+          frame(sx + 0.12, 0.1, sz + 0.1, cx, b.min[1] - 0.02, cz);
+          frame(0.1, sy + 0.1, sz + 0.1, b.min[0], cy, cz);
+          frame(0.1, sy + 0.1, sz + 0.1, b.max[0], cy, cz);
+        } else {
+          frame(sx + 0.1, 0.1, sz + 0.12, cx, b.max[1] + 0.05, cz);
+          frame(sx + 0.1, 0.1, sz + 0.12, cx, b.min[1] - 0.02, cz);
+          frame(sx + 0.1, sy + 0.1, 0.1, cx, cy, b.min[2]);
+          frame(sx + 0.1, sy + 0.1, 0.1, cx, cy, b.max[2]);
+        }
         continue;
       }
 
       // A thin dark cap on every solid, so edges read at distance without
       // paying for an outline pass.
-      if (!b.glass && !isFloor && !isRock && sy > 0.3) {
+      if (!isFloor && sy > 0.3) {
         const cap = new THREE.Mesh(
           new THREE.BoxGeometry(sx * 1.005, 0.06, sz * 1.005),
           new THREE.MeshBasicMaterial({ color: 0x2b3138 }),
         );
-        cap.position.set(mesh.position.x, b.max[1] + 0.03, mesh.position.z);
+        cap.position.set(cx, b.max[1] + 0.03, cz);
         this.mapGroup.add(cap);
       }
     }
     this.mapExtent = { x: ex, z: ez };
 
+    this.buildGroundDetail();
+    this.buildWallDetail();
     this.buildScenery();
     this.buildNeon();
     this.buildRain();
     this.setWeather(weather);
+  }
+
+  /**
+   * Life on the floor plane: a worn dirt path between the spawn ends, grass
+   * tufts and pebbles scattered deterministically. All of it sits millimetres
+   * above the floor and collides with nothing.
+   */
+  private buildGroundDetail() {
+    const { x: ex, z: ez } = this.mapExtent;
+    const ix = ex - 2.2; // inside the boundary walls
+    const iz = ez - 2.2;
+
+    // The main worn path runs the long axis (spawn to spawn), with a soft
+    // cross-lane through mid. Slight opacity so the ground texture shows
+    // through and the edge never reads as a hard decal.
+    const pathMat = new THREE.MeshLambertMaterial({
+      color: 0x8a7b6a,
+      map: surface("ground"),
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+    });
+    const main = new THREE.Mesh(new THREE.PlaneGeometry(3.2, iz * 2), pathMat);
+    main.rotation.x = -Math.PI / 2;
+    main.position.set(0, 0.015, 0);
+    main.receiveShadow = true;
+    const cross = new THREE.Mesh(new THREE.PlaneGeometry(ix * 2, 2.6), pathMat);
+    cross.rotation.x = -Math.PI / 2;
+    cross.position.set(0, 0.014, 0);
+    cross.receiveShadow = true;
+    this.mapGroup.add(main, cross);
+
+    // Grass tufts: little cones in three greens, kept off the worn path.
+    const grassMats = [0x4f7a4a, 0x5d8a52, 0x44693f].map(
+      (color) => new THREE.MeshLambertMaterial({ color }),
+    );
+    for (let i = 0; i < 70; i++) {
+      const x = (hash01(i, 3) - 0.5) * ix * 2;
+      const z = (hash01(i, 7) - 0.5) * iz * 2;
+      if (Math.abs(x) < 2.2) continue; // stay off the main path
+      const h = 0.16 + hash01(i, 11) * 0.2;
+      const tuft = new THREE.Mesh(
+        new THREE.ConeGeometry(0.09 + hash01(i, 17) * 0.08, h, 4),
+        grassMats[i % grassMats.length],
+      );
+      tuft.position.set(x, h / 2, z);
+      tuft.rotation.y = i * 1.3;
+      this.mapGroup.add(tuft);
+    }
+
+    // Pebbles.
+    const pebbleMat = new THREE.MeshLambertMaterial({ color: 0x82868c, map: surface("rock") });
+    for (let i = 0; i < 16; i++) {
+      const pebble = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.08 + hash01(i, 23) * 0.12, 0),
+        pebbleMat,
+      );
+      pebble.position.set((hash01(i, 29) - 0.5) * ix * 2, 0.06, (hash01(i, 31) - 0.5) * iz * 2);
+      pebble.rotation.set(i, i * 2.3, 0);
+      this.mapGroup.add(pebble);
+    }
+  }
+
+  /**
+   * Architecture on the boundary walls: a dark skirting line at the base and
+   * pilasters every few metres, so the arena's edge reads as a built place
+   * rather than four abstract planes. Visual only — everything hugs the wall
+   * face and collides with nothing.
+   */
+  private buildWallDetail() {
+    const { x: ex, z: ez } = this.mapExtent;
+    const ix = ex - 2.0; // inner wall face
+    const iz = ez - 2.0;
+    const pilasterMat = new THREE.MeshLambertMaterial({ color: 0x828b93, map: surface("concrete") });
+    const skirtMat = new THREE.MeshLambertMaterial({ color: 0x40474e });
+
+    const walls: { x?: number; z?: number }[] = [
+      { z: -iz }, { z: iz }, { x: -ix }, { x: ix },
+    ];
+    for (const w of walls) {
+      const alongX = w.z !== undefined;
+      const len = (alongX ? ix : iz) * 2;
+      // Skirting.
+      const skirt = new THREE.Mesh(
+        alongX
+          ? new THREE.BoxGeometry(len, 0.5, 0.12)
+          : new THREE.BoxGeometry(0.12, 0.5, len),
+        skirtMat,
+      );
+      skirt.position.set(
+        alongX ? 0 : w.x! * 0.995,
+        0.25,
+        alongX ? w.z! * 0.995 : 0,
+      );
+      this.mapGroup.add(skirt);
+      // Pilasters.
+      const count = Math.floor(len / 7);
+      for (let i = 0; i <= count; i++) {
+        const t = count > 0 ? i / count : 0.5;
+        const along = (t - 0.5) * (len - 2);
+        const pilaster = new THREE.Mesh(
+          alongX
+            ? tileBox(new THREE.BoxGeometry(0.5, 4.6, 0.22), 0.5, 4.6, 0.22)
+            : tileBox(new THREE.BoxGeometry(0.22, 4.6, 0.5), 0.22, 4.6, 0.5),
+          pilasterMat,
+        );
+        pilaster.position.set(
+          alongX ? along : w.x! * 0.99,
+          2.3,
+          alongX ? w.z! * 0.99 : along,
+        );
+        pilaster.castShadow = true;
+        this.mapGroup.add(pilaster);
+      }
+    }
   }
 
   /**
@@ -346,28 +668,89 @@ export class Renderer {
    */
   private buildScenery() {
     this.sceneryGroup.clear();
-    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5d4028 });
-    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x3e6b44 });
-    const rockMat = new THREE.MeshLambertMaterial({ color: 0x6c7076 });
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5d4028, map: surface("wood") });
+    const canopyMats = [0x3e6b44, 0x4a7a4e, 0x35603c].map(
+      (color) => new THREE.MeshLambertMaterial({ color }),
+    );
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x6c7076, map: surface("rock") });
+    const bushMat = new THREE.MeshLambertMaterial({ color: 0x486e42 });
     const ring = Math.max(this.mapExtent.x, this.mapExtent.z);
-    for (let i = 0; i < 26; i++) {
+
+    // The near ring: mixed forest with undergrowth and outcrops.
+    for (let i = 0; i < 34; i++) {
       const a = i * 0.483 * Math.PI;
       const r = ring + 7 + ((i * 37) % 20);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      if (i % 3 === 2) {
+      const kind = i % 5;
+      if (kind === 2) {
         const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.2 + (i % 4) * 0.7), rockMat);
         rock.position.set(x, 1.0, z);
         rock.rotation.set(i * 0.7, i * 1.3, 0);
         this.sceneryGroup.add(rock);
+      } else if (kind === 4) {
+        // A bush cluster: two squashed blobs.
+        for (let k = 0; k < 2; k++) {
+          const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(1.2 + k * 0.5, 0), bushMat);
+          bush.scale.y = 0.6;
+          bush.position.set(x + k * 1.4, 0.7, z - k * 0.8);
+          bush.rotation.y = i + k;
+          this.sceneryGroup.add(bush);
+        }
       } else {
+        // A layered conifer: trunk plus three stacked canopy tiers, height
+        // and shade varied per tree so the ring never reads as copies.
         const h = 8 + ((i * 53) % 7);
-        const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.8, h, 0.8), trunkMat);
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, h, 6), trunkMat);
         trunk.position.set(x, h / 2, z);
-        const canopy = new THREE.Mesh(new THREE.ConeGeometry(3.2, 6.0, 7), canopyMat);
-        canopy.position.set(x, h + 2.4, z);
-        this.sceneryGroup.add(trunk, canopy);
+        this.sceneryGroup.add(trunk);
+        const mat = canopyMats[i % canopyMats.length];
+        for (let tier = 0; tier < 3; tier++) {
+          const tr = 3.4 - tier * 0.95;
+          const canopy = new THREE.Mesh(new THREE.ConeGeometry(tr, 3.4, 7), mat);
+          canopy.position.set(x, h - 1.5 + tier * 2.2, z);
+          canopy.rotation.y = i + tier * 0.5;
+          this.sceneryGroup.add(canopy);
+        }
       }
+    }
+
+    // The far ring: a low skyline of buildings, so the world past the trees
+    // reads as somewhere people built, matching the arena's architecture.
+    const buildingMats = [0x525c66, 0x47505a, 0x5c6670].map(
+      (color) => new THREE.MeshLambertMaterial({ color, map: surface("concrete") }),
+    );
+    const windowMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
+    for (let i = 0; i < 9; i++) {
+      const a = i * 0.72 * Math.PI + 0.4;
+      const r = ring + 46 + ((i * 61) % 30);
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const w = 8 + ((i * 29) % 8);
+      const h = 14 + ((i * 43) % 22);
+      const tower = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, w * 0.8),
+        buildingMats[i % buildingMats.length],
+      );
+      tower.position.set(x, h / 2, z);
+      tower.rotation.y = a + Math.PI / 2;
+      this.sceneryGroup.add(tower);
+      // A few lit windows, brightest at night.
+      for (let k = 0; k < 5; k++) {
+        const win = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.3), windowMat);
+        const face = new THREE.Vector3(x, 0, z).normalize().multiplyScalar(-w * 0.41);
+        win.position.set(
+          x + face.x + (hash01(i * 7 + k, 51) - 0.5) * w * 0.7,
+          3 + hash01(i * 7 + k, 57) * (h - 5),
+          z + face.z + (hash01(i * 7 + k, 59) - 0.5) * w * 0.5,
+        );
+        win.lookAt(0, win.position.y, 0);
+        this.sceneryGroup.add(win);
+      }
+      // A rooftop water tank or antenna block.
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(2, 1.6, 2), buildingMats[(i + 1) % 3]);
+      cap.position.set(x, h + 0.8, z);
+      this.sceneryGroup.add(cap);
     }
   }
 
@@ -429,31 +812,124 @@ export class Renderer {
     this.scene.add(this.rain);
   }
 
-  private makeAvatar(team: number): THREE.Group {
+  /**
+   * A humanoid figure: articulated legs and arms for a walk cycle, a
+   * distinct head volume (because it is a distinct hitbox), and per-character
+   * gear so Ward, Vane, Echo and Kiln read as different people at a glance.
+   * Team identity stays on the torso, arms and head via one shared material,
+   * which is also what the state tints (marked / staggered / carrying) drive.
+   */
+  private makeAvatar(team: number, character: number): THREE.Group {
     const g = new THREE.Group();
     const color = TEAM_COLOR[team];
     const bodyMat = new THREE.MeshLambertMaterial({ color });
     const darkMat = new THREE.MeshLambertMaterial({ color: 0x20262c });
+    const gearMat = new THREE.MeshLambertMaterial({ color: 0x3a424b });
+    const skinMat = new THREE.MeshLambertMaterial({ color: 0xc9a184 });
+    const box = (w: number, h: number, d: number, mat: THREE.Material) =>
+      new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
 
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.72, 1.05, 0.42), bodyMat);
-    torso.position.y = 0.95;
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.36), darkMat);
-    legs.position.y = 0.45;
-    // The head is a distinct volume, because it is a distinct hitbox.
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.36, 0.42), bodyMat);
-    head.position.y = 1.66;
+    // A limb is a pivot group at the joint with the mesh hanging below it,
+    // so the walk cycle can rotate it about the hip or shoulder.
+    const limb = (name: string, w: number, len: number, mat: THREE.Material) => {
+      const pivot = new THREE.Group();
+      pivot.name = name;
+      const m = box(w, len, w, mat);
+      m.position.y = -len / 2;
+      pivot.add(m);
+      return pivot;
+    };
+
+    const legL = limb("legL", 0.22, 0.9, darkMat);
+    legL.position.set(-0.16, 0.9, 0);
+    const legR = limb("legR", 0.22, 0.9, darkMat);
+    legR.position.set(0.16, 0.9, 0);
+
+    const torso = box(0.6, 0.62, 0.32, bodyMat);
+    torso.position.y = 1.22;
+    const belt = box(0.62, 0.1, 0.34, gearMat);
+    belt.position.y = 0.93;
+
+    const armL = limb("armL", 0.15, 0.7, bodyMat);
+    armL.position.set(-0.39, 1.48, 0);
+    armL.rotation.x = -0.3;
+    // The right arm is raised toward the weapon and stays out of the cycle.
+    const armR = limb("armR", 0.15, 0.7, bodyMat);
+    armR.position.set(0.39, 1.48, 0);
+    armR.rotation.x = -1.15;
+    // Hands.
+    for (const arm of [armL, armR]) {
+      const hand = box(0.13, 0.12, 0.13, skinMat);
+      hand.position.y = -0.72;
+      arm.add(hand);
+    }
+
+    const neck = box(0.14, 0.1, 0.14, skinMat);
+    neck.position.y = 1.56;
+    const head = box(0.34, 0.32, 0.34, skinMat);
+    head.position.y = 1.72;
     head.name = "head";
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.44, 0.1, 0.06),
-      new THREE.MeshBasicMaterial({ color: 0x101418 }),
-    );
-    visor.position.set(0, 1.68, 0.21);
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.85), darkMat);
-    gun.position.set(0.26, 1.28, 0.4);
-    g.add(torso, legs, head, visor, gun);
+    // Eyes / visor line on the face.
+    const visor = box(0.3, 0.07, 0.04, darkMat);
+    visor.name = "visor";
+    visor.position.set(0, 1.74, 0.18);
+
+    const gun = box(0.11, 0.11, 0.8, darkMat);
+    gun.position.set(0.28, 1.26, 0.42);
+
+    g.add(legL, legR, torso, belt, armL, armR, neck, head, visor, gun);
+
+    // Character kits: silhouette accents that never recolor with the team.
+    switch (character) {
+      case 0: { // Ward: armour — full helmet, heavy chest plate, broad frame.
+        const helmet = box(0.4, 0.24, 0.4, gearMat);
+        helmet.position.y = 1.84;
+        const chest = box(0.5, 0.42, 0.08, gearMat);
+        chest.position.set(0, 1.26, 0.19);
+        torso.scale.set(1.12, 1, 1.15);
+        g.add(helmet, chest);
+        break;
+      }
+      case 1: { // Vane: fast and slim — hood and a trailing scarf.
+        const hood = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.34, 6), gearMat);
+        hood.position.y = 1.92;
+        const scarf = box(0.3, 0.1, 0.5, gearMat);
+        scarf.position.set(0, 1.5, -0.28);
+        torso.scale.set(0.92, 1, 0.92);
+        g.add(hood, scarf);
+        break;
+      }
+      case 2: { // Echo: sensors — glowing visor band and an antenna.
+        const band = box(0.36, 0.08, 0.06, new THREE.MeshBasicMaterial({ color: 0x35e0ff }));
+        band.name = "visor";
+        band.position.set(0, 1.74, 0.19);
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.34, 4), darkMat);
+        mast.position.set(0.14, 2.02, -0.1);
+        const tip = new THREE.Mesh(
+          new THREE.SphereGeometry(0.035, 6, 5),
+          new THREE.MeshBasicMaterial({ color: 0x35e0ff }),
+        );
+        tip.position.set(0.14, 2.2, -0.1);
+        g.add(band, mast, tip);
+        break;
+      }
+      case 3: { // Kiln: fire — shoulder pauldrons and an ember line on the chest.
+        for (const side of [-1, 1]) {
+          const pad = box(0.24, 0.14, 0.3, gearMat);
+          pad.position.set(0.36 * side, 1.6, 0);
+          g.add(pad);
+        }
+        const ember = box(0.06, 0.4, 0.05, new THREE.MeshBasicMaterial({ color: 0xff7a1e }));
+        ember.position.set(0, 1.24, 0.18);
+        g.add(ember);
+        break;
+      }
+    }
+
     g.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) o.castShadow = true;
     });
+    g.userData.bodyMat = bodyMat;
     return g;
   }
 
@@ -463,12 +939,28 @@ export class Renderer {
       seen.add(p.slot);
       let g = this.avatars.get(p.slot);
       if (!g) {
-        g = this.makeAvatar(p.team);
+        g = this.makeAvatar(p.team, p.character);
         this.avatars.set(p.slot, g);
         this.scene.add(g);
       }
       g.visible = p.alive && !p.isLocal;
       if (!g.visible) continue;
+
+      // Walk cycle driven by how far the avatar actually moved this frame.
+      const ud = g.userData as {
+        bodyMat: THREE.MeshLambertMaterial;
+        px?: number; pz?: number; phase?: number; amp?: number;
+      };
+      const dist = Math.hypot(p.x - (ud.px ?? p.x), p.z - (ud.pz ?? p.z));
+      ud.px = p.x;
+      ud.pz = p.z;
+      ud.phase = (ud.phase ?? 0) + dist * 5.5;
+      ud.amp = (ud.amp ?? 0) * 0.85 + Math.min(1, dist * 25) * 0.15;
+      const swing = Math.sin(ud.phase) * 0.6 * ud.amp;
+      (g.getObjectByName("legL") as THREE.Group).rotation.x = swing;
+      (g.getObjectByName("legR") as THREE.Group).rotation.x = -swing;
+      (g.getObjectByName("armL") as THREE.Group).rotation.x = -0.3 - swing * 0.7;
+
       g.position.set(p.x, p.y, p.z);
       g.rotation.y = p.yaw;
       const squash = p.crouching ? 0.64 : 1;
@@ -483,14 +975,7 @@ export class Renderer {
         : p.carrying
         ? 0x7cf7ff
         : TEAM_COLOR[p.team];
-      g.traverse((o) => {
-        const m = (o as THREE.Mesh).material as THREE.MeshLambertMaterial | undefined;
-        if (m && m.color && o.name !== "visor") {
-          if (m.color.getHex() !== 0x20262c && m.color.getHex() !== 0x101418) {
-            m.color.setHex(tint);
-          }
-        }
-      });
+      ud.bodyMat.color.setHex(tint);
     }
     for (const [slot, g] of this.avatars) {
       if (!seen.has(slot)) g.visible = false;
@@ -637,39 +1122,8 @@ export class Renderer {
     }
   }
 
-  /** Place the camera and advance every transient effect. */
-  update(
-    dt: number,
-    eye: [number, number, number],
-    yaw: number,
-    pitch: number,
-    ads: number,
-    speed: number,
-  ) {
-    // Death freeze: the last frame stays on the canvas as the backdrop.
-    if (this.frozen) return;
-    this.recoilKick *= Math.max(0, 1 - dt * 9);
-    this.viewBob += dt * Math.min(speed, 8) * 1.4;
-    const bob = Math.sin(this.viewBob) * 0.012 * Math.min(speed / 6, 1);
-
-    this.camera.position.set(eye[0], eye[1] + bob, eye[2]);
-    this.camera.rotation.set(0, 0, 0);
-    // The sim's look_dir is (sin yaw, sin pitch, cos yaw): +Z at yaw 0. A
-    // three.js camera looks down -Z, so it needs a half-turn on top of yaw or
-    // the view faces exactly opposite the direction the server resolves shots.
-    this.camera.rotateY(yaw + Math.PI);
-    this.camera.rotateX(pitch + this.recoilKick);
-
-    // The Ridge aims through a real scope: much deeper zoom, and the HUD
-    // draws the scope mask once the transition is nearly done.
-    const targetFov = this.weapon === 1 ? 95 - ads * 67 : 95 - ads * 32;
-    if (Math.abs(this.camera.fov - targetFov) > 0.1) {
-      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
-      this.camera.updateProjectionMatrix();
-    }
-    this.viewmodel.position.set(0.22 - ads * 0.22, -0.18 + ads * 0.09 - bob * 2, -0.42 - ads * 0.1);
-    this.viewmodel.visible = ads < (this.weapon === 1 ? 0.5 : 0.85);
-
+  /** Age tracers, impacts and the muzzle flash, retiring the expired ones. */
+  private stepTransients(dt: number) {
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
       t.life -= dt;
@@ -696,6 +1150,46 @@ export class Renderer {
     // At night the muzzle flash is the single loudest thing on the map.
     const flashPower = this.weather === 2 || this.blackout ? 9 : 4;
     this.muzzle.intensity = this.muzzleLife > 0 ? flashPower : 0;
+  }
+
+  /** Place the camera and advance every transient effect. */
+  update(
+    dt: number,
+    eye: [number, number, number],
+    yaw: number,
+    pitch: number,
+    ads: number,
+    speed: number,
+  ) {
+    // Transients age even while frozen. Shots go on being reported from all
+    // over the map during a respawn, and if their tracers did not expire they
+    // would all still be in the scene, at full opacity, on the first frame
+    // after the freeze lifts.
+    this.stepTransients(dt);
+
+    // Death freeze: the last frame stays on the canvas as the backdrop.
+    if (this.frozen) return;
+    this.recoilKick *= Math.max(0, 1 - dt * 9);
+    this.viewBob += dt * Math.min(speed, 8) * 1.4;
+    const bob = Math.sin(this.viewBob) * 0.012 * Math.min(speed / 6, 1);
+
+    this.camera.position.set(eye[0], eye[1] + bob, eye[2]);
+    this.camera.rotation.set(0, 0, 0);
+    // The sim's look_dir is (sin yaw, sin pitch, cos yaw): +Z at yaw 0. A
+    // three.js camera looks down -Z, so it needs a half-turn on top of yaw or
+    // the view faces exactly opposite the direction the server resolves shots.
+    this.camera.rotateY(yaw + Math.PI);
+    this.camera.rotateX(pitch + this.recoilKick);
+
+    // The Ridge aims through a real scope: much deeper zoom, and the HUD
+    // draws the scope mask once the transition is nearly done.
+    const targetFov = this.weapon === 1 ? 95 - ads * 67 : 95 - ads * 32;
+    if (Math.abs(this.camera.fov - targetFov) > 0.1) {
+      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
+      this.camera.updateProjectionMatrix();
+    }
+    this.viewmodel.position.set(0.22 - ads * 0.22, -0.18 + ads * 0.09 - bob * 2, -0.42 - ads * 0.1);
+    this.viewmodel.visible = ads < (this.weapon === 1 ? 0.5 : 0.85);
 
     if (this.rain && this.rain.visible) {
       const pos = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;

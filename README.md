@@ -18,7 +18,8 @@ and a WebGL client.
 
 That builds the WebAssembly simulation, the client bundle and the server, then
 serves the game on <http://localhost:8080>. Click **Play**; if nobody else is
-queued, bots fill the remaining seats after six seconds.
+queued, bots fill the remaining seats after six seconds. Set `TICK_PORT` (or
+`PORT`) to serve somewhere else.
 
 Rust and Node are the only prerequisites:
 
@@ -105,6 +106,18 @@ hand-packed binary. Layouts live in `crates/tick-server/src/proto.rs` and
 - **Three weather conditions** with real gameplay deltas: sight range feeds
   both the renderer's fog and the bots' perception, so Night genuinely blinds
   everyone.
+- **A dressed world** — surface textures drawn to a canvas at load time rather
+  than downloaded, so concrete, timber, rock and soil all read as materials
+  without costing a byte of transfer; grass, pebbles and worn paths on the
+  floor; skirting and pilasters along the arena walls; layered conifers,
+  undergrowth and boulders past the boundary, and a lit skyline behind those.
+  Collision is untouched: every added mesh is decoration the simulation has
+  never heard of.
+- **Humanoid characters** — articulated arms and legs with a walk cycle driven
+  by real movement, and gear that identifies the kit on sight: Ward's helmet
+  and chest plate, Vane's hood and scarf, Echo's lit visor band and antenna,
+  Kiln's pauldrons and ember line. The head stays a distinct volume because it
+  is a distinct hitbox.
 - **The Static Event system** — ten events, seeded at match start so the
   server can never invent one in reaction to the score, five-second telegraph,
   45-second minimum spacing, symmetric or underdog-tilted, and Overtime Coin
@@ -115,6 +128,13 @@ hand-packed binary. Layouts live in `crates/tick-server/src/proto.rs` and
 - **Server Draft, bot backfill, standby** — the server assigns everything;
   leaving, tabbing out or pressing Escape twice hands your character to a bot
   and keeps your seat.
+- **Synthesised weapon audio** — every shot is built from a pressure thump, a
+  pitched mechanism bark and a filtered noise crack whose filter sweeps as it
+  decays; the two long rifles add delayed, muffled echoes so a Ridge shot
+  sounds like it crossed the map. Melee has its own swing. Still no samples.
+- **Waiting always shows progress** — the queue runs a spinner and an elapsed
+  clock, and death runs a spinner and a respawn countdown, so no screen in the
+  game can be mistaken for a hang.
 
 ## What is not implemented yet
 

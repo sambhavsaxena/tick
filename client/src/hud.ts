@@ -40,7 +40,6 @@ export class Hud {
   private ammoNum = el("ammoNum");
   private weaponName = el("weaponName");
   private netreadout = el("netreadout");
-  private deadNotice = el("deadNotice");
 
   show() { this.root.classList.remove("hidden"); }
   hide() { this.root.classList.add("hidden"); }
@@ -59,14 +58,13 @@ export class Hud {
     this.clock.classList.toggle("urgent", s <= 30);
   }
 
-  setVitals(health: number, armor: number, alive: boolean, deadLabel = "Respawning") {
+  /** Being dead is announced by the death overlay, not by the status bar. */
+  setVitals(health: number, armor: number) {
     this.healthFill.style.width = `${Math.max(0, Math.min(100, health))}%`;
     this.armorFill.style.width = `${Math.max(0, Math.min(100, (armor / 25) * 100))}%`;
     this.armorFill.parentElement!.style.opacity = armor > 0 ? "1" : "0.25";
     this.healthNum.textContent = String(Math.max(0, health));
     this.armorNum.textContent = armor > 0 ? `+${armor}` : "";
-    this.deadNotice.classList.toggle("hidden", alive);
-    if (!alive) this.deadNotice.textContent = deadLabel;
   }
 
   setKit(character: number, abilityCooldown: number) {

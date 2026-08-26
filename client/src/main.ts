@@ -50,6 +50,10 @@ const standby = document.getElementById("standby") as HTMLElement;
 const playButton = document.getElementById("playButton") as HTMLButtonElement;
 const againButton = document.getElementById("againButton") as HTMLButtonElement;
 const queueState = document.getElementById("queueState") as HTMLElement;
+const queueWait = document.getElementById("queueWait") as HTMLElement;
+const queueTimer = document.getElementById("queueTimer") as HTMLElement;
+const respawnWait = document.getElementById("respawnWait") as HTMLElement;
+const respawnCount = document.getElementById("respawnCount") as HTMLElement;
 
 const renderer = new Renderer(canvas);
 const hud = new Hud();
@@ -81,6 +85,14 @@ let botTookOver = false;
 let againCountdown = 0;
 let adsAmount = 0;
 let isDead = false;
+/** When the lobby entered the queue, for the waiting clock. */
+let queuedSince = 0;
+/** When the server will respawn us, for the death countdown. */
+let respawnAt = 0;
+/** Previous frame's buttons, for melee key edge detection. */
+let prevButtons = 0;
+/** Respawn delay per mode, mirroring Mode::respawn_delay in the sim. */
+const RESPAWN_DELAY = [3, 2, 4, Infinity];
 /** Where our last landed shot hit, for anchoring damage numbers. */
 let lastImpact: { p: number[]; at: number } | null = null;
 const counters = { frames: 0, matchFrames: 0, steps: 0, sent: 0 };
@@ -102,6 +114,7 @@ async function boot() {
 playButton.addEventListener("click", () => {
   audio.start();
   net.send({ t: "play" });
+  queuedSince = performance.now();
   setPhase("queued");
   queueState.textContent = "Finding a match…";
 });
@@ -109,6 +122,7 @@ playButton.addEventListener("click", () => {
 againButton.addEventListener("click", () => {
   net.send({ t: "play" });
   results.classList.add("hidden");
+  queuedSince = performance.now();
   setPhase("queued");
   queueState.textContent = "Finding a match…";
 });
@@ -181,12 +195,17 @@ function enterDeath() {
   if (myMode === 3) {
     deathTitle.textContent = "Eliminated";
     loadoutRow.classList.add("hidden");
+    respawnWait.classList.add("hidden");
     hint.textContent = ghostPingSpent
       ? "Ghost ping spent · watching"
       : "Click to spend your ghost ping";
   } else {
     deathTitle.textContent = "Respawning";
     loadoutRow.classList.remove("hidden");
+    // Count down the server's respawn delay so the wait reads as a timer,
+    // not a freeze. The snapshot still decides the actual moment.
+    respawnAt = performance.now() + (RESPAWN_DELAY[myMode] ?? 3) * 1000;
+    respawnWait.classList.remove("hidden");
     hint.textContent = "Pick with 1–4 or click · applies when you respawn";
   }
   deathOverlay.classList.remove("hidden");
@@ -202,6 +221,7 @@ function leaveDeath() {
 function setPhase(next: Phase) {
   phase = next;
   lobby.classList.toggle("hidden", next !== "lobby" && next !== "queued");
+  queueWait.classList.toggle("hidden", next !== "queued");
   standby.classList.toggle("hidden", next !== "standby");
   if (next === "match") {
     hud.show();
@@ -507,6 +527,19 @@ function frame(now: number) {
   lastFrame = now;
   fps = fps * 0.9 + (1 / Math.max(dt, 0.0001)) * 0.1;
 
+  if (phase === "queued") {
+    // The waiting clock: proof the client is alive while the queue fills.
+    const s = Math.floor((now - queuedSince) / 1000);
+    queueTimer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  if (isDead && myMode !== 3) {
+    // Respawn countdown; once the delay elapses the server decides, so the
+    // readout switches to a beat rather than a stale zero.
+    const left = (respawnAt - now) / 1000;
+    respawnCount.textContent = left > 0 ? String(Math.ceil(left)) : "…";
+  }
+
   if (phase === "standby") {
     // Standby keeps the connection alive and hands the character to a bot
     // after twelve seconds, so the team never plays a man down.
@@ -539,7 +572,18 @@ function frame(now: number) {
     const scoped = myWeapon === 1 && adsAmount > 0.8;
     scopeOverlay.classList.toggle("hidden", !scoped);
     crosshairEl.classList.toggle("hidden", scoped);
+    // While aiming (right click) the crosshair collapses to a single dot so
+    // there is always a precise marker for where the gun points.
+    crosshairEl.classList.toggle("ads", !scoped && adsAmount > 0.5);
     input.adsSensScale = myWeapon === 1 ? 0.4 : 0.7;
+
+    // Melee swing sound on the key's rising edge (fire also swings when the
+    // Blade is equipped); the server resolves the hit, the whoosh is local feel.
+    const meleeMask = myWeapon === 6 ? BTN.MELEE | BTN.FIRE : BTN.MELEE;
+    if (!isDead && (input.buttons & meleeMask) !== 0 && (prevButtons & meleeMask) === 0) {
+      audio.swing();
+    }
+    prevButtons = input.buttons;
 
     renderPlayers();
     updateHud();
@@ -606,6 +650,7 @@ function renderPlayers() {
       x, y, z, yaw,
       pitch: p.pitch,
       team: p.team,
+      character: roster[p.slot]?.character ?? 0,
       alive: p.alive,
       crouching: p.crouching,
       marked: p.marked,
@@ -629,15 +674,7 @@ function updateHud() {
   const me = latest.players.find((p) => p.slot === mySlot);
   hud.setScores(latest.scoreA, latest.scoreB);
   hud.setClock(latest.timeLeft);
-  // Last Light has no respawn, so the dead notice says what is actually
-  // true and what the player can still do about it.
-  const deadLabel =
-    myMode === 3
-      ? ghostPingSpent
-        ? "Eliminated · ping spent"
-        : "Eliminated · click to ghost ping"
-      : "Respawning";
-  hud.setVitals(me?.health ?? 0, me?.armor ?? 0, me?.alive ?? false, deadLabel);
+  hud.setVitals(me?.health ?? 0, me?.armor ?? 0);
   hud.setKit(myCharacter, latest.abilityCooldown);
   hud.setCharge(latest.charge, latest.focus > 0);
   hud.setWeapon(myWeapon, latest.ammo, latest.reload > 0);
