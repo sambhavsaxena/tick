@@ -34,8 +34,14 @@ interface RosterEntry {
   bot: boolean;
 }
 
+/** Loadout picks by number key: 1 AR, 2 sniper, 3 sidearm, 4 melee. */
+const LOADOUT_WEAPONS = [0, 1, 4, 6];
+
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const lobby = document.getElementById("lobby") as HTMLElement;
+const deathOverlay = document.getElementById("deathOverlay") as HTMLElement;
+const deathTitle = document.getElementById("deathTitle") as HTMLElement;
+const loadoutRow = document.getElementById("loadoutRow") as HTMLElement;
 const spawnCard = document.getElementById("spawnCard") as HTMLElement;
 const results = document.getElementById("results") as HTMLElement;
 const standby = document.getElementById("standby") as HTMLElement;
@@ -73,6 +79,9 @@ let standbySince = 0;
 let botTookOver = false;
 let againCountdown = 0;
 let adsAmount = 0;
+let isDead = false;
+/** Where our last landed shot hit, for anchoring damage numbers. */
+let lastImpact: { p: number[]; at: number } | null = null;
 const counters = { frames: 0, matchFrames: 0, steps: 0, sent: 0 };
 
 nameInput.value = localStorage.getItem("tick.name") ?? "";
@@ -118,16 +127,16 @@ window.addEventListener("mousedown", () => {
     return;
   }
   if (phase !== "match") return;
-  if (!input.locked) {
-    input.requestLock();
+  if (isDead) {
+    // The mouse is deliberately free while dead: loadout buttons are
+    // clickable, and in Last Light a click spends the ghost ping.
+    if (myMode === 3 && !ghostPingSpent) {
+      net.send({ t: "ghostping" });
+      ghostPingSpent = true;
+    }
     return;
   }
-  // Last Light: click while dead to spend your one ghost ping for the round.
-  const me = latest?.players.find((p) => p.slot === mySlot);
-  if (me && !me.alive && myMode === 3) {
-    net.send({ t: "ghostping" });
-    ghostPingSpent = true;
-  }
+  if (!input.locked) input.requestLock();
 });
 
 input.onStandby = () => {
@@ -148,9 +157,51 @@ document.addEventListener("visibilitychange", () => {
 
 input.onLockChange = (locked) => {
   // Losing the pointer lock mid-match is the most common way a player steps
-  // away, so it is treated as the start of standby rather than as nothing.
-  if (!locked && phase === "match") enterStandby();
+  // away, so it is treated as the start of standby rather than as nothing —
+  // except while dead, where the lock is released on purpose so the mouse
+  // can click the loadout buttons.
+  if (!locked && phase === "match" && !isDead) enterStandby();
 };
+
+input.onWeaponKey = (n) => chooseLoadout(LOADOUT_WEAPONS[n - 1]);
+for (const btn of Array.from(loadoutRow.querySelectorAll<HTMLButtonElement>(".loadoutBtn"))) {
+  btn.addEventListener("click", () => chooseLoadout(Number(btn.dataset.w)));
+}
+
+function chooseLoadout(w: number) {
+  if (phase !== "match" || !isDead || myMode === 3) return;
+  net.send({ t: "loadout", w });
+  for (const btn of Array.from(loadoutRow.querySelectorAll<HTMLButtonElement>(".loadoutBtn"))) {
+    btn.classList.toggle("chosen", Number(btn.dataset.w) === w);
+  }
+}
+
+/** Death: freeze the backdrop, hand the mouse back, offer the loadout. */
+function enterDeath() {
+  isDead = true;
+  renderer.frozen = true;
+  input.releaseLock();
+  const hint = document.getElementById("deathHint") as HTMLElement;
+  if (myMode === 3) {
+    deathTitle.textContent = "Eliminated";
+    loadoutRow.classList.add("hidden");
+    hint.textContent = ghostPingSpent
+      ? "Ghost ping spent · watching"
+      : "Click to spend your ghost ping";
+  } else {
+    deathTitle.textContent = "Respawning";
+    loadoutRow.classList.remove("hidden");
+    hint.textContent = "Pick with 1–4 or click · applies when you respawn";
+  }
+  deathOverlay.classList.remove("hidden");
+}
+
+function leaveDeath() {
+  isDead = false;
+  renderer.frozen = false;
+  deathOverlay.classList.add("hidden");
+  if (phase === "match") input.requestLock();
+}
 
 function setPhase(next: Phase) {
   phase = next;
@@ -158,9 +209,14 @@ function setPhase(next: Phase) {
   standby.classList.toggle("hidden", next !== "standby");
   if (next === "match") {
     hud.show();
-    input.requestLock();
+    if (!isDead) input.requestLock();
   } else {
-    if (next !== "standby") hud.hide();
+    if (next !== "standby") {
+      hud.hide();
+      deathOverlay.classList.add("hidden");
+      renderer.frozen = false;
+      isDead = false;
+    }
     input.releaseLock();
   }
   playButton.disabled = next === "queued";
@@ -205,6 +261,12 @@ function onJson(msg: any) {
       pending = [];
       inputSeq = 0;
       smoothing = [0, 0, 0];
+      isDead = false;
+      renderer.frozen = false;
+      deathOverlay.classList.add("hidden");
+      for (const btn of Array.from(loadoutRow.querySelectorAll(".loadoutBtn"))) {
+        btn.classList.remove("chosen");
+      }
 
       const brushes = sim!.loadMap(msg.map);
       renderer.buildMap(brushes, msg.weather);
@@ -227,7 +289,7 @@ function onJson(msg: any) {
 
 function showSpawnCard(msg: any) {
   const names = ["Ward", "Vane", "Echo", "Kiln"];
-  const guns = ["Sting", "Ridge", "Maul", "Arc", "Tack", "Lance"];
+  const guns = ["Sting", "Ridge", "Maul", "Arc", "Tack", "Lance", "Blade"];
   (document.getElementById("draftChar") as HTMLElement).textContent = names[myCharacter];
   (document.getElementById("draftWeapon") as HTMLElement).textContent = guns[myWeapon];
   (document.getElementById("draftMap") as HTMLElement).textContent = msg.mapName;
@@ -262,6 +324,7 @@ function handleEvent(e: any) {
       }
       renderer.spawnTracer(origin, e.p, e.hit);
       if (e.hit) renderer.spawnImpact(e.p, e.hs ? 0xffd447 : 0xffe0b0);
+      if (e.slot === mySlot && e.hit) lastImpact = { p: e.p, at: performance.now() };
       if (!silenced) {
         const eye = cameraEye();
         audio.shot(e.w, e.o, eye, input.yaw);
@@ -270,9 +333,14 @@ function handleEvent(e: any) {
       break;
     }
     case "dmg":
-      if (e.a === mySlot) {
+      if (e.a === mySlot && e.v !== mySlot) {
         hud.hitmark(e.hs);
         audio.hitmarker(e.hs);
+        // Anchor the number to the shot's impact point when it is fresh
+        // (melee and projectile damage arrive without one).
+        const fresh = lastImpact && performance.now() - lastImpact.at < 200;
+        const at = fresh ? renderer.projectToScreen(lastImpact!.p) : null;
+        hud.damageNumber(e.n, e.hs, at);
       }
       break;
     case "kill": {
@@ -341,7 +409,16 @@ function onSnapshot(snap: Snapshot) {
   if (snapshots.length > 24) snapshots.shift();
   reconcile(snap);
   const meRow = snap.players.find((p) => p.slot === mySlot);
-  if (meRow) myWeapon = meRow.weapon;
+  if (meRow) {
+    if (meRow.weapon !== myWeapon) {
+      myWeapon = meRow.weapon;
+      renderer.setViewmodel(myWeapon);
+    }
+    // The snapshot is the authority on being dead, so the death screen keys
+    // off it rather than off kill events.
+    if (phase === "match" && !meRow.alive && !isDead) enterDeath();
+    else if (meRow.alive && isDead) leaveDeath();
+  }
   renderer.syncProps(snap);
   if (snap.weather !== currentWeather) {
     currentWeather = snap.weather;
@@ -626,6 +703,7 @@ function showResults(msg: any) {
   },
   BTN,
   renderer,
+  hud,
   state: () => ({
     phase,
     mySlot,

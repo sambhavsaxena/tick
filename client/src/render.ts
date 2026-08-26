@@ -85,6 +85,8 @@ export class Renderer {
   private blackout = false;
   private recoilKick = 0;
   private viewBob = 0;
+  /** While true, update() presents nothing new: the death backdrop. */
+  frozen = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -92,16 +94,30 @@ export class Renderer {
       canvas,
       antialias: false,
       powerPreference: "high-performance",
+      // The death screen freezes on the last presented frame, which only
+      // stays on the canvas if the buffer survives compositing.
+      preserveDrawingBuffer: true,
     });
-    // Dynamic resolution: this has to hold 60 fps on integrated graphics, so
-    // the pixel ratio is capped well below what a retina display asks for.
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    // Deliberately low internal resolution, upscaled with nearest-neighbour
+    // CSS: the pixelated look is the style, and it is also what keeps the
+    // tone mapping and shadow passes cheap on integrated graphics.
+    this.renderer.setPixelRatio(1);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.camera = new THREE.PerspectiveCamera(95, 1, 0.05, 300);
     this.scene.add(this.mapGroup, this.shimmerGroup, this.cinderGroup, this.propGroup);
 
     this.ambient = new THREE.HemisphereLight(0x8ea0ad, 0x2b3138, 0.9);
     this.sun = new THREE.DirectionalLight(0xfff2e0, 1.4);
     this.sun.position.set(24, 40, 12);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    const sc = this.sun.shadow.camera;
+    sc.left = -60; sc.right = 60; sc.top = 60; sc.bottom = -60;
+    sc.near = 1; sc.far = 120;
+    this.sun.shadow.bias = -0.002;
     this.scene.add(this.ambient, this.sun);
 
     this.muzzle = new THREE.PointLight(0xffc07a, 0, 16, 2);
@@ -117,7 +133,10 @@ export class Renderer {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.renderer.setSize(w, h, false);
+    // Render at a fixed 400-line internal height; CSS stretches the canvas
+    // to the window with image-rendering: pixelated.
+    const scale = Math.min(1, 400 / h);
+    this.renderer.setSize(Math.round(w * scale), Math.round(h * scale), false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -183,6 +202,10 @@ export class Renderer {
         (b.min[1] + b.max[1]) / 2,
         (b.min[2] + b.max[2]) / 2,
       );
+      if (!b.glass) {
+        mesh.castShadow = !isFloor;
+        mesh.receiveShadow = true;
+      }
       this.mapGroup.add(mesh);
 
       // A thin dark cap on every solid, so edges read at distance without
@@ -245,6 +268,9 @@ export class Renderer {
     const gun = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.85), darkMat);
     gun.position.set(0.26, 1.28, 0.4);
     g.add(torso, legs, head, visor, gun);
+    g.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+    });
     return g;
   }
 
@@ -315,6 +341,10 @@ export class Renderer {
         parts.push(box(0.08, 0.09, 1.05, dark), box(0.1, 0.16, 0.26, accent));
         parts[1].position.set(0, -0.04, 0.3);
         break;
+      case 6: // Blade: short grip, flat blade
+        parts.push(box(0.05, 0.12, 0.16, dark), box(0.025, 0.07, 0.42, accent));
+        parts[1].position.set(0, 0.02, 0.28);
+        break;
       default: // Sting
         parts.push(box(0.09, 0.1, 0.5, dark), box(0.06, 0.2, 0.1, accent));
         parts[1].position.set(0, -0.13, 0.06);
@@ -326,6 +356,16 @@ export class Renderer {
 
   kickRecoil(amount: number) {
     this.recoilKick = Math.min(this.recoilKick + amount, 0.22);
+  }
+
+  /** World point to CSS pixel coordinates, or null when behind the camera. */
+  projectToScreen(pos: number[]): { x: number; y: number } | null {
+    const v = new THREE.Vector3(pos[0], pos[1], pos[2]).project(this.camera);
+    if (v.z > 1) return null;
+    return {
+      x: (v.x * 0.5 + 0.5) * window.innerWidth,
+      y: (-v.y * 0.5 + 0.5) * window.innerHeight,
+    };
   }
 
   spawnTracer(from: number[], to: number[], hit: boolean) {
@@ -422,6 +462,8 @@ export class Renderer {
     ads: number,
     speed: number,
   ) {
+    // Death freeze: the last frame stays on the canvas as the backdrop.
+    if (this.frozen) return;
     this.recoilKick *= Math.max(0, 1 - dt * 9);
     this.viewBob += dt * Math.min(speed, 8) * 1.4;
     const bob = Math.sin(this.viewBob) * 0.012 * Math.min(speed / 6, 1);

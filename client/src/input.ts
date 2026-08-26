@@ -32,6 +32,8 @@ export class InputState {
   private lastEscape = 0;
   onStandby: () => void = () => {};
   onLockChange: (locked: boolean) => void = () => {};
+  /** Number row 1-4, fired even without pointer lock: the dead pick loadouts. */
+  onWeaponKey: (n: number) => void = () => {};
 
   private keys = new Set<string>();
   private canvas: HTMLElement;
@@ -98,6 +100,10 @@ export class InputState {
         this.lastEscape = now;
       }
       return;
+    }
+    if (e.code.startsWith("Digit")) {
+      const n = Number(e.code.slice(5));
+      if (n >= 1 && n <= 4) this.onWeaponKey(n);
     }
     if (!this.locked) return;
     if (e.code === "Space") e.preventDefault();

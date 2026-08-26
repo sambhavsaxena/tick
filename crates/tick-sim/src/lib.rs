@@ -1022,9 +1022,17 @@ impl World {
         }
 
         // Melee. Instant from behind, and the execution tool in Headhunt.
-        if input.held(buttons::MELEE) && self.players[i].melee_cooldown <= 0.0 {
-            self.players[i].melee_cooldown = 0.7;
+        // The Blade loadout has no gun, so its primary fire swings too, on a
+        // shorter cooldown.
+        let blade = self.players[i].weapon == Weapon::Blade;
+        let wants_melee =
+            input.held(buttons::MELEE) || (blade && input.held(buttons::FIRE));
+        if wants_melee && self.players[i].melee_cooldown <= 0.0 {
+            self.players[i].melee_cooldown = if blade { 0.5 } else { 0.7 };
             self.resolve_melee(i);
+        }
+        if blade {
+            return;
         }
 
         // Focus: spend a full Precision Charge for two seconds of steadier aim.
@@ -1269,6 +1277,10 @@ impl World {
             let from_behind = victim_dir.dot(d.normalized()) > 0.4;
             let dmg = if from_behind || self.players[j].staggered {
                 999.0
+            } else if self.players[i].weapon == Weapon::Blade {
+                // A dedicated knife kills from the front too — it is the
+                // whole loadout.
+                100.0
             } else {
                 55.0
             };
@@ -1889,6 +1901,18 @@ impl World {
     /// This exists because the worst moment in a round-based shooter is dying
     /// first and watching for fifty seconds. A held card turns that into
     /// something to spend.
+    /// A dead player choosing what to respawn with. Only settable while dead,
+    /// so a live player can never swap mid-fight; the respawn path reads
+    /// `weapon` and fills the magazine.
+    pub fn set_loadout(&mut self, slot: u8, weapon: Weapon) -> bool {
+        let i = slot as usize;
+        if i >= self.players.len() || self.players[i].alive {
+            return false;
+        }
+        self.players[i].weapon = weapon;
+        true
+    }
+
     pub fn ghost_ping(&mut self, slot: u8) -> bool {
         let i = slot as usize;
         if self.cfg_mode != Mode::LastLight || i >= self.players.len() {
@@ -2120,6 +2144,30 @@ mod tests {
         assert_eq!(w.players[1].health, 1);
         w.apply_damage(0, 1, 100.0, true, 5.0, false);
         assert!(!w.players[1].alive, "a head shot finishes a staggered target");
+    }
+
+    #[test]
+    fn loadout_swaps_only_while_dead_and_blade_knifes_from_the_front() {
+        let mut w = world();
+        w.add_player(Player::new(0, 0, "a".into(), Character::Vane, Weapon::Sting));
+        w.add_player(Player::new(1, 1, "b".into(), Character::Vane, Weapon::Sting));
+        w.step();
+        assert!(!w.set_loadout(0, Weapon::Blade), "a live player cannot swap");
+        assert_eq!(w.players[0].weapon, Weapon::Sting);
+        w.apply_damage(1, 0, 300.0, true, 5.0, false);
+        assert!(!w.players[0].alive);
+        assert!(w.set_loadout(0, Weapon::Blade), "a dead player can swap");
+        assert_eq!(w.players[0].weapon, Weapon::Blade);
+
+        // A frontal Blade melee kills a full-health target outright.
+        w.players[1].mv.pos = w.players[0].mv.pos.add(v3(0.0, 0.0, 1.5));
+        w.players[0].yaw = 0.0;
+        // Victim faces the attacker, so this is a front hit, not an execution.
+        w.players[1].yaw = 3.14;
+        w.players[0].alive = true;
+        w.players[0].health = MAX_HEALTH;
+        w.resolve_melee(0);
+        assert!(!w.players[1].alive, "a front Blade hit must kill");
     }
 
     #[test]

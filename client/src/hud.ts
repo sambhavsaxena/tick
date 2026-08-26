@@ -5,7 +5,7 @@
 // the things you act on — health, ammo, the event that is about to land —
 // are the only elements allowed to move or colour.
 
-const WEAPON_NAMES = ["Sting", "Ridge", "Maul", "Arc", "Tack", "Lance"];
+const WEAPON_NAMES = ["Sting", "Ridge", "Maul", "Arc", "Tack", "Lance", "Blade"];
 const CHARACTER_NAMES = ["Ward", "Vane", "Echo", "Kiln"];
 const ABILITY_NAMES = ["Shimmer", "Blink", "Pulse", "Cinderline"];
 
@@ -88,13 +88,35 @@ export class Hud {
     this.weaponName.textContent = reloading
       ? "Reloading"
       : WEAPON_NAMES[weapon] ?? "";
-    this.ammoNum.textContent = String(Math.max(0, ammo));
-    this.ammoNum.classList.toggle("empty", ammo <= 0);
+    // The Blade has no ammunition to count.
+    if (weapon === 6) {
+      this.ammoNum.textContent = "—";
+      this.ammoNum.classList.remove("empty");
+    } else {
+      this.ammoNum.textContent = String(Math.max(0, ammo));
+      this.ammoNum.classList.toggle("empty", ammo <= 0);
+    }
   }
 
   setNet(rtt: number, fps: number, interpMs: number) {
     this.netreadout.textContent =
       `${Math.round(rtt)} ms rtt · ${Math.round(interpMs)} ms interp · ${Math.round(fps)} fps`;
+  }
+
+  /**
+   * Floating damage number at the hit's screen position (crosshair when the
+   * hit point is unknown). Headshots read gold and larger.
+   */
+  damageNumber(amount: number, headshot: boolean, at: { x: number; y: number } | null) {
+    const span = document.createElement("span");
+    span.className = headshot ? "dmgNum head" : "dmgNum";
+    span.textContent = String(amount);
+    const x = (at?.x ?? window.innerWidth / 2) + (Math.random() - 0.5) * 30;
+    const y = (at?.y ?? window.innerHeight / 2 - 30) + (Math.random() - 0.5) * 14;
+    span.style.left = `${x}px`;
+    span.style.top = `${y}px`;
+    this.root.appendChild(span);
+    window.setTimeout(() => span.remove(), 750);
   }
 
   hitmark(headshot: boolean) {

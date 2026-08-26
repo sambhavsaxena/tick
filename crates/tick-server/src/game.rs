@@ -33,6 +33,8 @@ pub enum ToMatch {
     Standby { slot: u8, on: bool },
     /// Last Light: a dead player spending their one ping for the round.
     GhostPing { slot: u8 },
+    /// A dead player picking the weapon they respawn with.
+    Loadout { slot: u8, weapon: u8 },
 }
 
 #[derive(Clone)]
@@ -182,6 +184,13 @@ async fn run(spec: MatchSpec, mut rx: mpsc::Receiver<ToMatch>) {
                 }
                 ToMatch::GhostPing { slot } => {
                     world.ghost_ping(slot);
+                }
+                ToMatch::Loadout { slot, weapon } => {
+                    // Only the four self-service loadouts; the Lance stays
+                    // airdrop-only and Maul/Arc stay draft-only.
+                    if matches!(weapon, 0 | 1 | 4 | 6) {
+                        world.set_loadout(slot, Weapon::from_u8(weapon));
+                    }
                 }
                 ToMatch::Standby { slot, on } => {
                     let i = slot as usize;

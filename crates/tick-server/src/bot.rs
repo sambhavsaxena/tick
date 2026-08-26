@@ -234,6 +234,9 @@ fn effective_range(w: Weapon) -> f32 {
         Weapon::Arc => 32.0,
         Weapon::Tack => 18.0,
         Weapon::Lance => 60.0,
+        // Knife range: a bot holding a Blade closes to melee distance, and
+        // its FIRE press swings rather than shoots.
+        Weapon::Blade => 2.0,
     }
 }
 

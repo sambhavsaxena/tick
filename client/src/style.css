@@ -431,3 +431,62 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
   .spinner, #eventBanner.telegraph { animation: none; }
   .bonusRow { animation-duration: 0.01s; }
 }
+
+/* ------------------------------------------------------------ pixel look */
+
+#view { image-rendering: pixelated; }
+
+/* --------------------------------------------------------- damage numbers */
+
+.dmgNum {
+  position: fixed;
+  font-family: var(--mono);
+  font-size: 1rem;
+  color: #ffe0b0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  animation: dmgFloat 0.75s ease-out forwards;
+}
+.dmgNum.head { color: #ffd447; font-size: 1.25rem; }
+@keyframes dmgFloat {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-36px); }
+}
+
+/* ------------------------------------------------------------ death screen */
+
+#deathOverlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 8, 11, 0.55);
+  z-index: 9;
+}
+.deathInner { text-align: center; font-family: var(--sans); color: #c8d2dc; }
+#deathTitle { font-family: var(--mono); font-size: 1.3rem; margin: 0 0 1rem; }
+#deathHint { display: block; margin-top: 0.9rem; font-size: 0.72rem; color: #8b949e; }
+#loadoutRow { display: flex; gap: 0.6rem; justify-content: center; }
+.loadoutBtn {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: #c8d2dc;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 5.4rem;
+}
+.loadoutBtn b { color: #8b949e; font-weight: 600; }
+.loadoutBtn small { color: #8b949e; font-size: 0.65rem; }
+.loadoutBtn:hover { border-color: rgba(255, 255, 255, 0.4); }
+.loadoutBtn.chosen {
+  border-color: var(--ally, #3fd0c0);
+  color: #ffffff;
+  background: rgba(63, 208, 192, 0.12);
+}

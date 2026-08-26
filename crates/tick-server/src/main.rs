@@ -213,6 +213,14 @@ async fn connection(socket: WebSocket, hub: Arc<Hub>) {
                             .send(ToClient::Json(json!({"t":"cancelled"}).to_string()))
                             .await;
                     }
+                    // A dead player choosing their respawn weapon.
+                    "loadout" => {
+                        let w = v.get("w").and_then(|w| w.as_u64()).unwrap_or(0) as u8;
+                        let l = { link.lock().unwrap().clone() };
+                        if let Some(l) = l {
+                            let _ = l.tx.try_send(ToMatch::Loadout { slot: l.slot, weapon: w });
+                        }
+                    }
                     // Last Light: a dead player spends their one ping.
                     "ghostping" => {
                         let l = { link.lock().unwrap().clone() };

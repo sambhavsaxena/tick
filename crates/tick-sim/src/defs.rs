@@ -47,6 +47,8 @@ pub enum Weapon {
     Tack = 4,
     /// Airdrop-only rifle. Exists nowhere else in the game.
     Lance = 5,
+    /// Melee-only loadout: no ranged fire at all. Left click swings.
+    Blade = 6,
 }
 
 impl Weapon {
@@ -57,6 +59,7 @@ impl Weapon {
             3 => Weapon::Arc,
             4 => Weapon::Tack,
             5 => Weapon::Lance,
+            6 => Weapon::Blade,
             _ => Weapon::Sting,
         }
     }
@@ -182,6 +185,27 @@ impl Weapon {
                 falloff_mult: 1.0,
                 projectile_speed: 0.0,
                 recoil: 3.0,
+            },
+            // No gun at all. Fire and melee both swing the knife; a clean
+            // front hit kills, so choosing it is a commitment, not a handicap.
+            Weapon::Blade => WeaponStats {
+                name: "Blade",
+                interval: 10.0,
+                burst: 1,
+                burst_interval: 0.0,
+                body: 0.0,
+                head: 0.0,
+                pellets: 0,
+                spread: 0.0,
+                mag: 0,
+                reload: 10.0,
+                shell_reload: false,
+                ads_time: 0.1,
+                falloff_start: 0.0,
+                falloff_end: 0.0,
+                falloff_mult: 0.0,
+                projectile_speed: 0.0,
+                recoil: 0.0,
             },
         }
     }
