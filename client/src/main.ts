@@ -107,8 +107,6 @@ let spectating = 255;
 let specEye: [number, number, number] | null = null;
 /** Respawn delay per mode, mirroring Mode::respawn_delay in the sim. */
 const RESPAWN_DELAY = [3, 2, 4, Infinity];
-/** This match's length, so elapsed time can be derived from the clock. */
-let matchDuration = 240;
 /** Where our last landed shot hit, for anchoring damage numbers. */
 let lastImpact: { p: number[]; at: number } | null = null;
 const counters = { frames: 0, matchFrames: 0, steps: 0, sent: 0 };
@@ -343,6 +341,9 @@ function onJson(msg: any) {
       currentWeather = msg.weather;
       myMode = msg.mode;
       ghostPingSpent = false;
+      spectating = 255;
+      specEye = null;
+      lastKiller = null;
       snapshots = [];
       latest = null;
       pending = [];
@@ -355,7 +356,6 @@ function onJson(msg: any) {
         btn.classList.remove("chosen");
       }
 
-      matchDuration = msg.duration ?? 240;
       const brushes = sim!.loadMap(msg.map);
       renderer.buildMap(brushes, msg.weather);
       renderer.setViewmodel(myWeapon);
@@ -518,7 +518,16 @@ function onSnapshot(snap: Snapshot) {
     }
     // The snapshot is the authority on being dead, so the death screen keys
     // off it rather than off kill events.
-    if (phase === "match" && !meRow.alive && !isDead) enterDeath();
+    //
+    // Standby counts as being in the match here. A player who steps away is
+    // still a body on the server: they get shot, they respawn, and the
+    // killcam is the one thing worth showing them when they come back. Gating
+    // this on `phase === "match"` left `isDead` false while the server had
+    // them dead — no killcam, no respawn countdown, no loadout, and nothing
+    // to clear when the respawn finally landed, because `leaveDeath` had
+    // nothing to leave.
+    const inMatch = phase === "match" || phase === "standby";
+    if (inMatch && !meRow.alive && !isDead) enterDeath();
     else if (meRow.alive && isDead) leaveDeath();
   }
   renderer.syncProps(snap);
@@ -694,15 +703,6 @@ function frame(now: number) {
 
   if (phase === "match" && sim) {
     counters.matchFrames++;
-    // Put scheduled brushes where the match clock says they are, before
-    // predicting into them and before drawing them. Elapsed time comes from
-    // the server's own clock, so a sliding container is in the same place
-    // here as it is on the server.
-    if (latest) {
-      sim.setTime(matchDuration - latest.timeLeft);
-      const g = sim.geometryView();
-      renderer.syncGeometry(g.view, g.count);
-    }
     accumulator += dt * 1000;
     let steps = 0;
     while (accumulator >= TICK_MS && steps < 8) {
@@ -800,6 +800,12 @@ function renderPlayers() {
   const span = newer ? newer.received - older.received : 0;
   const t = span > 0 ? Math.min(1, Math.max(0, (renderTime - older.received) / span)) : 0;
 
+  // Resolve the spectated slot once, through the same guarded lookup the
+  // camera uses. Reading the raw `spectating` here would hide a live player
+  // any time that value went stale — which is a player shooting at you that
+  // you can never see.
+  const specSlot = spectatedPlayer()?.slot ?? -1;
+
   const out: RenderPlayer[] = [];
   for (const p of older.players) {
     const n = newer?.players.find((q) => q.slot === p.slot);
@@ -820,7 +826,7 @@ function renderPlayers() {
       carrying: p.carrying,
       // Whoever the camera is inside is not drawn: our own body normally,
       // the player we are spectating while dead.
-      isLocal: p.slot === mySlot || p.slot === spectating,
+      isLocal: p.slot === mySlot || p.slot === specSlot,
     });
   }
   renderer.syncPlayers(out);

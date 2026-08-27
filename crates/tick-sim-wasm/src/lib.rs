@@ -68,24 +68,6 @@ pub extern "C" fn world_init(map_id: u32) {
     publish_geometry();
 }
 
-/// Move every scheduled brush to where `time` seconds into the match puts it.
-///
-/// This is the same `Motion::aabb_at` the server runs, from the same clock, so
-/// a sliding container is in the same place for the predicted local player as
-/// it is for the authoritative one. Call before stepping.
-#[no_mangle]
-pub extern "C" fn set_time(time: f32) {
-    unsafe {
-        let map = (*addr_of_mut!(MAP)).as_mut().expect("world_init not called");
-        for b in &mut map.brushes {
-            if let Some(m) = b.motion {
-                b.aabb = m.aabb_at(time);
-            }
-        }
-    }
-    publish_geometry();
-}
-
 /// Mark a pane broken, mirroring the server's `GlassBroken` event, so the
 /// client stops colliding with a window that is no longer there.
 #[no_mangle]

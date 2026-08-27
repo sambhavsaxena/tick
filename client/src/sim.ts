@@ -19,7 +19,6 @@ export interface SimExports {
     speedMult: number, gravityMult: number, canSprint: number,
     pullX: number, pullZ: number,
   ): void;
-  set_time(time: number): void;
   break_glass(index: number): void;
   memory: WebAssembly.Memory;
 }
@@ -80,9 +79,9 @@ export class Sim {
   }
 
   /**
-   * A live view of the geometry buffer: seven floats per brush, no allocation.
-   * Used by the per-frame geometry sync, where building an array of brush
-   * objects sixty times a second would be pure garbage.
+   * A live view of the geometry buffer: seven floats per brush, no
+   * allocation. Read after a pane breaks, to hand the renderer the geometry
+   * the simulation is actually colliding against.
    */
   geometryView(): { view: Float32Array; count: number } {
     const count = this.ex.geometry_count();
@@ -90,11 +89,6 @@ export class Sim {
       view: new Float32Array(this.ex.memory.buffer, this.ex.geometry_ptr(), count * 7),
       count,
     };
-  }
-
-  /** Put scheduled brushes where this match time says they are. */
-  setTime(time: number) {
-    this.ex.set_time(time);
   }
 
   /** Mirror the server's GlassBroken: that pane no longer collides. */

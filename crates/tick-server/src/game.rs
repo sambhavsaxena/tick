@@ -418,7 +418,7 @@ fn compute_visibility(
             let seen = targets.iter().any(|t| {
                 let d = t.sub(eye);
                 let len = d.len();
-                let hit = movement::trace_world(eye, d.normalized(), len, &w.map.brushes).t;
+                let hit = movement::trace_sight(eye, d.normalized(), len, &w.map.brushes);
                 hit >= len - 0.3
             });
             if seen {

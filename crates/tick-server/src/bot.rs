@@ -70,7 +70,7 @@ impl Bot {
                 continue;
             }
             let dir = to.normalized();
-            let t = movement::trace_world(eye, dir, dist, &w.map.brushes).t;
+            let t = movement::trace_sight(eye, dir, dist, &w.map.brushes);
             if t < dist - 0.4 {
                 continue;
             }

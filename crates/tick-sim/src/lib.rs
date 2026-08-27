@@ -791,10 +791,6 @@ impl World {
         self.time += DT;
         self.time_left -= DT;
 
-        // Before anything reads geometry: sliding containers and rising
-        // shutters are where the clock says they are, for movement, traces
-        // and spawn checks alike.
-        self.step_geometry();
         self.step_schedule();
         self.step_players();
         self.step_projectiles();
@@ -2139,21 +2135,6 @@ impl World {
         });
     }
 
-    /// Move every scheduled brush to where the clock says it is.
-    ///
-    /// Runs before anything reads geometry this tick, so movement, traces and
-    /// spawn checks all agree on where a sliding container is. Position is a
-    /// pure function of elapsed time, which is why this needs no state and
-    /// why the client reproduces it exactly from the same number.
-    fn step_geometry(&mut self) {
-        let t = self.time;
-        for b in &mut self.map.brushes {
-            if let Some(m) = b.motion {
-                b.aabb = m.aabb_at(t);
-            }
-        }
-    }
-
     /// The clock is the only thing that ends a match. Score decides who won
     /// when it runs out, but no lead is ever large enough to end one early:
     /// every match is worth the same four minutes of your time, and a team
@@ -2282,6 +2263,7 @@ mod tests {
         })
     }
 
+
     #[test]
     fn ridge_head_shot_kills_outright() {
         let mut w = world();
@@ -2409,40 +2391,72 @@ mod tests {
     }
 
     #[test]
+    fn sight_passes_through_anything_bullets_pass_through() {
+        // Thin cover grants no concealment. If it blocked sight while passing
+        // bullets, the server would cull a shooter that can still hit you —
+        // which reads to the player as being shot from nowhere.
+        let brushes = vec![
+            Brush {
+                aabb: Aabb::from_center(v3(0.0, 1.0, 5.0), v3(4.0, 1.0, 0.2)),
+                thin: true,
+                glass: false,
+                broken: false,
+            },
+            Brush {
+                aabb: Aabb::from_center(v3(0.0, 1.0, 15.0), v3(4.0, 1.0, 0.2)),
+                thin: false,
+                glass: false,
+                broken: false,
+            },
+        ];
+        let origin = v3(0.0, 1.0, 0.0);
+        let dir = v3(0.0, 0.0, 1.0);
+
+        // Bullets stop at the thin panel (they penetrate it, but it is the
+        // first thing they meet), while sight carries past it to the solid.
+        let shot = movement::trace_world(origin, dir, 50.0, &brushes);
+        assert!(shot.t < 6.0, "a bullet meets the thin panel first");
+        assert!(shot.thin, "and knows it was thin");
+
+        let sight = movement::trace_sight(origin, dir, 50.0, &brushes);
+        assert!(
+            sight > 14.0,
+            "sight ignores thin cover and stops at the solid wall, got {sight}"
+        );
+
+        // A broken pane stops both.
+        let mut broken = brushes.clone();
+        broken[1].broken = true;
+        assert!(
+            movement::trace_sight(origin, dir, 50.0, &broken) >= 50.0,
+            "nothing solid left to block sight"
+        );
+    }
+
+    #[test]
     fn no_spawn_point_sits_inside_geometry() {
-        // Moving brushes are checked across a whole cycle, not just where
-        // they happen to start. A container that parks on a spawn point for
-        // six seconds out of every twenty-four would pass a single-frame
-        // check and still kill people for respawning.
+        // Level layout and spawn placement are edited independently, so this
+        // is the check that keeps them honest: a spawn or a terminal inside a
+        // brush puts a player's camera inside a wall.
         for id in [MapId::Vault, MapId::Depot, MapId::Terrace, MapId::Substation] {
-            let mut map = load_map(id);
-            for step in 0..=48 {
-                let t = step as f32 * 0.5;
-                for b in &mut map.brushes {
-                    if let Some(m) = b.motion {
-                        b.aabb = m.aabb_at(t);
-                    }
-                }
-                for (label, list) in [("A", &map.spawns_a), ("B", &map.spawns_b)] {
-                    for (i, s) in list.iter().enumerate() {
-                        assert!(
-                            !spot_blocked(*s, &map.brushes),
-                            "{} spawn {}{} is inside a brush at t={}",
-                            map.id.name(),
-                            label,
-                            i,
-                            t
-                        );
-                    }
-                }
-                for term in &map.terminals {
+            let map = load_map(id);
+            for (label, list) in [("A", &map.spawns_a), ("B", &map.spawns_b)] {
+                for (i, s) in list.iter().enumerate() {
                     assert!(
-                        !spot_blocked(*term, &map.brushes),
-                        "{} has a terminal inside a brush at t={}",
+                        !spot_blocked(*s, &map.brushes),
+                        "{} spawn {}{} is inside a brush",
                         map.id.name(),
-                        t
+                        label,
+                        i
                     );
                 }
+            }
+            for term in &map.terminals {
+                assert!(
+                    !spot_blocked(*term, &map.brushes),
+                    "{} has a terminal inside a brush",
+                    map.id.name()
+                );
             }
         }
     }

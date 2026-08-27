@@ -243,6 +243,28 @@ pub fn trace_world(origin: Vec3, dir: Vec3, max_t: f32, brushes: &[Brush]) -> Wo
     hit
 }
 
+/// Cast a ray against the geometry that blocks *sight*.
+///
+/// Thin cover is deliberately transparent here. Bullets pass through it, so
+/// if it also hid the shooter you would be shot by someone the server had
+/// culled from your screen — cover that grants concealment it was never meant
+/// to grant. Anything you can be shot through, you can see through; only
+/// solid geometry hides a player.
+pub fn trace_sight(origin: Vec3, dir: Vec3, max_t: f32, brushes: &[Brush]) -> f32 {
+    let mut best = max_t;
+    for b in brushes {
+        if b.thin || b.broken {
+            continue;
+        }
+        if let Some(t) = b.aabb.ray(origin, dir, max_t) {
+            if t < best {
+                best = t;
+            }
+        }
+    }
+    best
+}
+
 /// What a ray met in the level. `brush` is `usize::MAX` when nothing was hit
 /// inside the trace's range.
 #[derive(Clone, Copy, Debug)]

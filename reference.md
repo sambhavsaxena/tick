@@ -59,6 +59,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | **Last Light** — rounds, fog wall | `World::step_last_light` |
 | Ghost pings | `World::ghost_ping`, routed via `ToMatch::GhostPing` (`game.rs`), sent by client on click-while-dead (`main.ts`) |
 | Killcam (watch your killer, then *their* killer) | `Player::killed_by` and `World::spectate_target` (`lib.rs`); visibility resolved from the spectated eye in `compute_visibility` (`game.rs`); camera in `viewEye` (`main.ts`), honoured by both the match and standby render paths in `frame` |
+| Death and respawn state | `onSnapshot` in `main.ts` — the snapshot's `alive` flag drives `enterDeath` / `leaveDeath`, in Standby as well as in the match, because a player who steps away is still a body on the server |
 | Diagnosing the killcam | `window.tick.state()` — `spectating` is the slot the server sent, `spectated` is the one the client resolved, `camera` is where the view actually is |
 | Twin Core / Pinhead | `World::start_event` and `World::apply_damage`; drawn only in their own mode via `StaticEvent::mode_lock` |
 | Second Wind (round 4) | inside `World::step_last_light` |
@@ -102,10 +103,10 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Piece | Where |
 |---|---|
 | Geometry, spawns, terminals | `load_map` in `defs.rs` |
-| Moving brushes (Depot cranes, Substation shutters) | `Motion` / `moving` in `defs.rs`; applied by `World::step_geometry`, mirrored client-side by wasm `set_time` |
 | Breakable glass | `World::break_glass`, called from `resolve_hitscan` and `step_projectiles`; `SimEvent::GlassBroken` → wasm `break_glass` → `Renderer.syncGeometry` |
 | Spawn safety (never inside a wall) | `free_spot` / `spot_blocked` in `lib.rs`, plus `World::best_spawn` |
 | Client geometry (same brushes) | `Sim.loadMap` (`client/src/sim.ts`) → `Renderer.buildMap` |
+| Who can see whom (snapshot culling) | `compute_visibility` in `game.rs`, using `movement::trace_sight` — only **solid** geometry hides a player, because thin cover passes bullets |
 | Weather gameplay effect | `Weather::sight_range` — feeds bot perception (`bot.rs`) and snapshot culling (`game.rs`) |
 | Weather look (fog, light, rain, cloud deck) | `LOOKS` table + `Renderer.applyLook` / `buildVista` (`render.ts`) |
 | Surface textures (concrete, wood, ground, rock, metal) | `surface` in `render.ts` — drawn to a canvas at runtime, no assets |
@@ -213,10 +214,12 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 Tracked here so they are not re-reported as bugs. Full wording in `README.md`.
 
 - WebTransport / HTTP-3 (WebSocket only, by decision — see `README.md`)
-- Vault's floodlight cycle (Depot cranes, Substation shutters and Terrace
-  breakable glass are all implemented)
+- Vault's floodlight cycle (Terrace breakable glass is implemented)
 - Cosmetics and accounts
 
 Out of scope by decision, not backlog: replay capture, the daily Precision
-Report, free-fly ghost spectating (the killcam replaces it), and skill-based
-matchmaking.
+Report, free-fly ghost spectating (the killcam replaces it), skill-based
+matchmaking, and moving level geometry — brushes that slid on a schedule were
+removed because prediction, spawn safety and sight traces all had to agree on
+where a brush was *right now*, and the cost of that agreement outweighed what
+the movement added.
