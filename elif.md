@@ -27,7 +27,7 @@ headshot from far away scores about three times more than a plain kill.
 |---|---|
 | W A S D | Move |
 | Mouse | Look; left click shoots, right click aims down sights |
-| Shift | Sprint (only forward, and you can't shoot while sprinting) |
+| Shift | Sprint (only forward; you can still shoot, the shots just scatter) |
 | Space | Jump |
 | Ctrl or C | Crouch |
 | R | Reload |

@@ -6,6 +6,7 @@
 // Everything authoritative — damage, hit detection, score — happens on the
 // server; this file is a renderer with opinions about latency.
 
+import { Attract } from "./attract";
 import { Audio } from "./audio";
 import { Hud } from "./hud";
 import { InputState } from "./input";
@@ -50,7 +51,7 @@ const standby = document.getElementById("standby") as HTMLElement;
 const playButton = document.getElementById("playButton") as HTMLButtonElement;
 const againButton = document.getElementById("againButton") as HTMLButtonElement;
 const queueState = document.getElementById("queueState") as HTMLElement;
-const queueWait = document.getElementById("queueWait") as HTMLElement;
+const searching = document.getElementById("searching") as HTMLElement;
 const queueTimer = document.getElementById("queueTimer") as HTMLElement;
 const respawnWait = document.getElementById("respawnWait") as HTMLElement;
 const respawnCount = document.getElementById("respawnCount") as HTMLElement;
@@ -60,6 +61,7 @@ const killerName = document.getElementById("killerName") as HTMLElement;
 const killerKit = document.getElementById("killerKit") as HTMLElement;
 
 const renderer = new Renderer(canvas);
+const attract = new Attract(renderer);
 const hud = new Hud();
 const audio = new Audio();
 const input = new InputState(canvas);
@@ -109,6 +111,17 @@ let specEye: [number, number, number] | null = null;
 const RESPAWN_DELAY = [3, 2, 4, Infinity];
 /** Where our last landed shot hit, for anchoring damage numbers. */
 let lastImpact: { p: number[]; at: number } | null = null;
+/**
+ * Blended crouch, 0 standing to 1 crouched. The simulation flips instantly —
+ * it has to, because the hitbox does — but a camera that teleports 65 cm
+ * downward reads as a glitch rather than as crouching, so the view eases into
+ * it. Purely visual: the server resolves shots from its own eye.
+ */
+let crouchBlend = 0;
+/** The reload this loader is showing, so its ring has something to fill. */
+let reloadTotal = 0;
+/** True while the lobby's backdrop match is running. */
+let attractRunning = false;
 const counters = { frames: 0, matchFrames: 0, steps: 0, sent: 0 };
 
 // ---------------------------------------------------------------- lifecycle
@@ -140,6 +153,7 @@ async function boot() {
     return;
   }
   sim = await Sim.load("/tick_sim.wasm");
+  startAttract();
   net.onJson = onJson;
   net.onSnapshot = onSnapshot;
   net.onClose = () => {
@@ -148,6 +162,29 @@ async function boot() {
   };
   net.connect();
   requestAnimationFrame(frame);
+}
+
+/**
+ * The lobby's backdrop: a real map, drafted at random, with eight avatars
+ * fighting over it. It runs on the same renderer the match uses, so what the
+ * menu sits in front of is what the game actually looks like.
+ */
+function startAttract() {
+  if (!sim) return;
+  const map = Math.floor(Math.random() * 4);
+  // Clear or Rain only. Night is the right look for a match and the wrong one
+  // for a menu — a black screen behind the type says nothing about the game.
+  const weather = Math.random() < 0.75 ? 0 : 1;
+  const brushes = sim.loadMap(map);
+  renderer.buildMap(brushes, weather);
+  attract.reset(brushes);
+  currentWeather = weather;
+  attractRunning = true;
+}
+
+function stopAttract() {
+  attractRunning = false;
+  renderer.hideViewmodel = false;
 }
 
 playButton.addEventListener("click", () => {
@@ -285,8 +322,18 @@ function leaveDeath() {
 function setPhase(next: Phase) {
   phase = next;
   lobby.classList.toggle("hidden", next !== "lobby" && next !== "queued");
-  queueWait.classList.toggle("hidden", next !== "queued");
+  // Waiting for a match is its own screen laid over the lobby, rather than a
+  // spinner that appears inside it and shoves the layout around.
+  searching.classList.toggle("hidden", next !== "queued");
   standby.classList.toggle("hidden", next !== "standby");
+  // The backdrop runs whenever the lobby is on screen, including behind the
+  // matchmaking overlay — and comes back after a match, because the lobby is
+  // where a player lands next.
+  if (next === "lobby" || next === "queued") {
+    if (!attractRunning) startAttract();
+  } else {
+    stopAttract();
+  }
   if (next === "match") {
     hud.show();
     if (!isDead) input.requestLock();
@@ -604,7 +651,7 @@ function interpDelayMs(): number {
 function cameraEye(): [number, number, number] {
   if (!sim) return [0, 0, 0];
   const p = sim.pos;
-  const eye = sim.crouching ? CROUCH_EYE : EYE_HEIGHT;
+  const eye = EYE_HEIGHT + (CROUCH_EYE - EYE_HEIGHT) * crouchBlend;
   return [p[0] + smoothing[0], p[1] + eye + smoothing[1], p[2] + smoothing[2]];
 }
 
@@ -657,6 +704,13 @@ function frame(now: number) {
     // The waiting clock: proof the client is alive while the queue fills.
     const s = Math.floor((now - queuedSince) / 1000);
     queueTimer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  // The lobby's backdrop keeps playing behind the matchmaking screen: the
+  // wait is exactly when a player is most likely to be looking at it.
+  if (attractRunning && (phase === "lobby" || phase === "queued")) {
+    attract.step(dt);
+    return;
   }
 
   if (isDead) {
@@ -713,6 +767,12 @@ function frame(now: number) {
     // Decay the reconciliation offset toward zero.
     const decay = Math.max(0, 1 - dt * 12);
     smoothing = [smoothing[0] * decay, smoothing[1] * decay, smoothing[2] * decay];
+
+    // Ease the camera into and out of the crouch. Fast enough that it never
+    // feels like the input was ignored, slow enough that it reads as a
+    // movement rather than as a jump cut.
+    const wantCrouch = sim.crouching ? 1 : 0;
+    crouchBlend += (wantCrouch - crouchBlend) * Math.min(1, dt * 16);
 
     const wantAds = (input.buttons & BTN.ADS) !== 0 ? 1 : 0;
     adsAmount += (wantAds - adsAmount) * Math.min(1, dt * 12);
@@ -848,6 +908,16 @@ function updateHud() {
   hud.setKit(myCharacter, latest.abilityCooldown);
   hud.setCharge(latest.charge, latest.focus > 0);
   hud.setWeapon(myWeapon, latest.ammo, latest.reload > 0);
+  // Reload loader. The snapshot carries the timer counting down, not the
+  // length of the reload, so the first snapshot of a reload defines the full
+  // sweep and everything after it fills against that.
+  if (latest.reload > 0) {
+    if (latest.reload > reloadTotal) reloadTotal = latest.reload;
+    hud.setReload(1 - latest.reload / Math.max(reloadTotal, 0.001));
+  } else {
+    reloadTotal = 0;
+    hud.setReload(null);
+  }
   hud.setNet(net.rtt, fps, interpDelayMs());
   renderer.setBlackout((latest.eventBits & EVENT_BLACKOUT) !== 0);
 }
@@ -876,8 +946,23 @@ function showResults(msg: any) {
 
   const outcome = document.getElementById("outcome") as HTMLElement;
   const myTeam = roster[msg.you]?.team ?? 0;
-  outcome.textContent =
-    msg.winner === 255 ? "Draw" : msg.winner === myTeam ? "Victory" : "Defeat";
+  const draw = msg.winner === 255;
+  const won = msg.winner === myTeam;
+  outcome.textContent = draw ? "Draw" : won ? "Victory" : "Defeat";
+  outcome.classList.remove("win", "lose", "draw");
+  outcome.classList.add(draw ? "draw" : won ? "win" : "lose");
+  // Re-run the entrance animation even when the same word comes up twice.
+  outcome.style.animation = "none";
+  void outcome.offsetWidth;
+  outcome.style.animation = "";
+
+  const note = document.getElementById("outcomeNote") as HTMLElement;
+  const alpha = msg.scoreA ?? 0;
+  const bravo = msg.scoreB ?? 0;
+  note.textContent =
+    typeof msg.scoreA === "number"
+      ? `Alpha ${alpha} · Bravo ${bravo}`
+      : "";
 
   const best = document.getElementById("bestKill") as HTMLElement;
   if (msg.bestKill) {
@@ -934,6 +1019,8 @@ function showResults(msg: any) {
     weather: currentWeather,
     pos: sim?.pos,
     onGround: sim?.onGround,
+    crouching: sim?.crouching,
+    crouchBlend,
     visiblePlayers: latest?.players.length ?? 0,
     scores: latest ? [latest.scoreA, latest.scoreB] : null,
     timeLeft: latest?.timeLeft ?? 0,

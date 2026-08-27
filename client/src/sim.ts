@@ -30,6 +30,12 @@ export interface Brush {
   glass: boolean;
   /** A pane that has been shot out: no collision, and not drawn. */
   broken: boolean;
+  /**
+   * Terrain — a rock, a tree trunk, a hedge. It collides exactly like any
+   * other brush; the flag is what tells the renderer to draw it as scenery
+   * instead of as a box of poured concrete.
+   */
+  natural: boolean;
 }
 
 export class Sim {
@@ -73,6 +79,7 @@ export class Sim {
         thin: (flags & 1) === 1,
         glass: (flags & 2) === 2,
         broken: (flags & 4) === 4,
+        natural: (flags & 8) === 8,
       });
     }
     return out;

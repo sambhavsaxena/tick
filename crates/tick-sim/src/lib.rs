@@ -366,7 +366,9 @@ pub struct Player {
     pub burst_left: u8,
     pub burst_timer: f32,
     pub ads: f32,
-    pub sprint_lock: f32,
+    /// Time left on the sprint spread penalty. Sprinting no longer blocks a
+    /// shot; it only widens the cone, and this is how long that lasts.
+    pub sprint_spread: f32,
     pub ability_cooldown: f32,
     pub melee_cooldown: f32,
 
@@ -420,7 +422,7 @@ impl Player {
             burst_left: 0,
             burst_timer: 0.0,
             ads: 0.0,
-            sprint_lock: 0.0,
+            sprint_spread: 0.0,
             ability_cooldown: 0.0,
             melee_cooldown: 0.0,
             charge: 0.0,
@@ -1015,9 +1017,9 @@ impl World {
                     && p.last_input.held(buttons::FWD)
                     && !p.staggered;
                 if sprinting {
-                    p.sprint_lock = SPRINT_FIRE_DELAY;
+                    p.sprint_spread = SPRINT_SPREAD_LINGER;
                 } else {
-                    p.sprint_lock = (p.sprint_lock - DT).max(0.0);
+                    p.sprint_spread = (p.sprint_spread - DT).max(0.0);
                 }
 
                 // Armour regenerates five seconds after the last hit taken.
@@ -1120,9 +1122,12 @@ impl World {
             return;
         }
 
+        // Sprinting no longer holds the trigger. Running and gunning costs
+        // accuracy (see the sprint term in `fire_once`) rather than costing
+        // the shot outright, so the answer to being caught mid-sprint is to
+        // shoot back instead of to wait out a lockout.
         let can_fire = input.held(buttons::FIRE)
             && self.players[i].fire_cooldown <= 0.0
-            && self.players[i].sprint_lock <= 0.0
             && self.players[i].reload_timer <= 0.0
             && !self.players[i].staggered;
 
@@ -1167,8 +1172,13 @@ impl World {
         if self.players[i].focus_timer > 0.0 {
             spread *= 0.4;
         }
+        // Firing on the move opens the cone; firing at a sprint opens it
+        // further still. This is the whole cost of shooting while running.
         if self.players[i].mv.vel.len_xz() > 4.0 {
             spread *= 1.8;
+        }
+        if self.players[i].sprint_spread > 0.0 {
+            spread *= SPRINT_SPREAD_MULT;
         }
 
         if stats.is_hitscan() {
@@ -1307,15 +1317,27 @@ impl World {
             }
         }
 
-        if let Some((victim, headshot)) = best_target {
+        if let Some((victim, mut headshot)) = best_target {
             let dist = best_t;
+            let point = origin.add(dir.scale(best_t));
+            // Head-shot grace: a body hit that landed within `HEAD_GRACE` of
+            // the head box is scored as a head shot. The neck, the top of a
+            // shoulder and the sliver a rewound hitbox leaves behind all fall
+            // inside that margin, and none of them ever looked like body
+            // shots to the person who fired. Centre mass is metres away from
+            // it, so nothing that reads as a body shot is promoted.
+            if !headshot {
+                let (vpos, _) = self.rewound(victim, back);
+                if self.players[victim].head_box(vpos).distance_to(point) <= HEAD_GRACE {
+                    headshot = true;
+                }
+            }
             let stats = self.players[shooter].weapon.stats();
             let mut dmg = if headshot { head_dmg } else { body_dmg } * stats.falloff(dist);
             let through_cover = dist > world_t && penetrating;
             if through_cover {
                 dmg *= 0.5;
             }
-            let point = origin.add(dir.scale(best_t));
             // A pellet that lands beyond the weapon's falloff does no damage,
             // and a shot that does no damage is not a hit. Counting it would
             // inflate accuracy and, through it, Aim Rating — a shotgun player
@@ -1778,7 +1800,16 @@ impl World {
                 continue;
             }
 
-            if let Some((j, head)) = target {
+            if let Some((j, mut head)) = target {
+                // Same head-shot grace the hitscan path uses, so Arc scores a
+                // clipped neck the way every other weapon does.
+                if !head {
+                    let point = origin.add(dir.scale(best_t));
+                    let hb = self.players[j].head_box(self.players[j].mv.pos);
+                    if hb.distance_to(point) <= HEAD_GRACE {
+                        head = true;
+                    }
+                }
                 let travelled = origin.sub(self.players[pr.owner as usize].eye()).len() + best_t;
                 hits.push((
                     pr.owner as usize,
@@ -2401,12 +2432,14 @@ mod tests {
                 thin: true,
                 glass: false,
                 broken: false,
+                natural: false,
             },
             Brush {
                 aabb: Aabb::from_center(v3(0.0, 1.0, 15.0), v3(4.0, 1.0, 0.2)),
                 thin: false,
                 glass: false,
                 broken: false,
+                natural: false,
             },
         ];
         let origin = v3(0.0, 1.0, 0.0);
@@ -2593,5 +2626,148 @@ mod tests {
         let maul = Weapon::Maul.stats();
         assert_eq!(maul.pellets as f32 * maul.body * maul.falloff(5.0), 108.0);
         assert_eq!(maul.falloff(12.0), 0.0);
+    }
+
+    /// Every obstacle is either something you can get on top of or something
+    /// that reads as a wall — nothing sits in the band between the two, where
+    /// a box is too tall to mantle and too short to be architecture.
+    ///
+    /// "Can get on top of" is checked by reachability, not by height alone: a
+    /// stair tread at 2.0 m is fine when there is a 1.0 m tread beside it, and
+    /// a 2.0 m block standing on its own is not.
+    #[test]
+    fn every_obstacle_is_either_climbable_or_a_wall() {
+        // Horizontal slack when deciding whether you can jump from one top to
+        // the next: a player's own width plus a short hop.
+        const REACH: f32 = 0.9;
+
+        for id in [MapId::Vault, MapId::Depot, MapId::Terrace, MapId::Substation] {
+            let map = load_map(id);
+            let tops: Vec<f32> = map.brushes.iter().map(|b| b.aabb.max.y).collect();
+
+            // Fixpoint: a top is reachable from the ground, or from another
+            // reachable top no more than one jump below it and close enough
+            // horizontally to jump across.
+            let mut reachable: Vec<bool> = tops.iter().map(|t| *t <= MANTLE_HEIGHT).collect();
+            loop {
+                let mut grew = false;
+                for i in 0..map.brushes.len() {
+                    if reachable[i] {
+                        continue;
+                    }
+                    for j in 0..map.brushes.len() {
+                        if i == j || !reachable[j] {
+                            continue;
+                        }
+                        let rise = tops[i] - tops[j];
+                        if !(0.0..=MANTLE_HEIGHT).contains(&rise) {
+                            continue;
+                        }
+                        let a = &map.brushes[i].aabb;
+                        let b = &map.brushes[j].aabb;
+                        let near = a.min.x - REACH < b.max.x
+                            && a.max.x + REACH > b.min.x
+                            && a.min.z - REACH < b.max.z
+                            && a.max.z + REACH > b.min.z;
+                        if near {
+                            reachable[i] = true;
+                            grew = true;
+                            break;
+                        }
+                    }
+                }
+                if !grew {
+                    break;
+                }
+            }
+
+            for (i, brush) in map.brushes.iter().enumerate() {
+                if brush.natural {
+                    continue;
+                }
+                assert!(
+                    tops[i] >= WALL_HEIGHT || reachable[i],
+                    "{}: brush {} tops out at {:.2} m — too tall to climb onto \
+                     and too short to read as a wall",
+                    id.name(),
+                    i,
+                    tops[i],
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_hit_just_under_the_head_still_scores_as_a_head_shot() {
+        let mut w = world();
+        w.add_player(Player::new(0, 0, "a".into(), Character::Vane, Weapon::Tack));
+        w.add_player(Player::new(1, 1, "b".into(), Character::Vane, Weapon::Tack));
+        w.players[0].mv.pos = v3(0.0, 0.1, 0.0);
+        w.players[1].mv.pos = v3(0.0, 0.1, 8.0);
+        for _ in 0..4 {
+            w.step();
+        }
+        w.players[0].rewind_ticks = 0;
+
+        // Aim one centimetre under the head box: a body hit by the strict
+        // boxes, a head shot once the grace margin is applied.
+        let target = v3(0.0, 0.1 + HEAD_BOTTOM - 0.01, 8.0);
+        let eye = w.players[0].eye();
+        let d = target.sub(eye);
+        let (yaw, pitch) = (atan2(d.x, d.z), asin(d.normalized().y));
+        w.set_input(0, Input { seq: 1, yaw, pitch, buttons: buttons::FIRE });
+        w.step();
+        assert_eq!(
+            w.players[1].health,
+            MAX_HEALTH - Weapon::Tack.stats().head as i32,
+            "a shot inside the head-shot grace margin pays head damage"
+        );
+
+        // Centre mass is nowhere near the margin and still reads as a body shot.
+        let mut w2 = world();
+        w2.add_player(Player::new(0, 0, "a".into(), Character::Vane, Weapon::Tack));
+        w2.add_player(Player::new(1, 1, "b".into(), Character::Vane, Weapon::Tack));
+        w2.players[0].mv.pos = v3(0.0, 0.1, 0.0);
+        w2.players[1].mv.pos = v3(0.0, 0.1, 8.0);
+        for _ in 0..4 {
+            w2.step();
+        }
+        w2.players[0].rewind_ticks = 0;
+        let chest = v3(0.0, 0.1 + 1.0, 8.0);
+        let eye2 = w2.players[0].eye();
+        let d2 = chest.sub(eye2);
+        let (yaw2, pitch2) = (atan2(d2.x, d2.z), asin(d2.normalized().y));
+        w2.set_input(0, Input { seq: 1, yaw: yaw2, pitch: pitch2, buttons: buttons::FIRE });
+        w2.step();
+        assert_eq!(
+            w2.players[1].health,
+            MAX_HEALTH - Weapon::Tack.stats().body as i32,
+            "centre mass is still a body shot"
+        );
+    }
+
+    #[test]
+    fn sprinting_no_longer_holds_the_trigger() {
+        let mut w = world();
+        w.add_player(Player::new(0, 0, "a".into(), Character::Vane, Weapon::Sting));
+        w.add_player(Player::new(1, 1, "b".into(), Character::Vane, Weapon::Sting));
+        for _ in 0..4 {
+            w.step();
+        }
+        let before = w.players[0].stats.shots_fired;
+        w.set_input(
+            0,
+            Input {
+                seq: 1,
+                yaw: 0.0,
+                pitch: 0.0,
+                buttons: buttons::FIRE | buttons::SPRINT | buttons::FWD,
+            },
+        );
+        w.step();
+        assert!(
+            w.players[0].stats.shots_fired > before,
+            "a sprinting player who pulls the trigger fires"
+        );
     }
 }

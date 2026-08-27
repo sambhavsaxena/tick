@@ -40,6 +40,8 @@ export class Hud {
   private ammoNum = el("ammoNum");
   private weaponName = el("weaponName");
   private netreadout = el("netreadout");
+  private reloadRing = el("reloadRing");
+  private reloadFill = this.reloadRing.querySelector(".ring") as HTMLElement;
 
   show() { this.root.classList.remove("hidden"); }
   hide() { this.root.classList.add("hidden"); }
@@ -93,6 +95,23 @@ export class Hud {
     } else {
       this.ammoNum.textContent = String(Math.max(0, ammo));
       this.ammoNum.classList.toggle("empty", ammo <= 0);
+    }
+  }
+
+  /**
+   * The reload loader: a small ring under the crosshair that fills as the
+   * magazine goes in. Pass null when nothing is reloading.
+   *
+   * It lives at the crosshair rather than in the status bar because it is the
+   * one number you have to act on while looking down the middle of the
+   * screen — now that you can keep firing while you run, the reload is the
+   * only thing that actually takes the gun away from you.
+   */
+  setReload(progress: number | null) {
+    const on = progress !== null;
+    this.reloadRing.classList.toggle("hidden", !on);
+    if (on) {
+      this.reloadFill.style.setProperty("--p", String(Math.max(0, Math.min(1, progress))));
     }
   }
 

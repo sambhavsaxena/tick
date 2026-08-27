@@ -121,6 +121,15 @@ impl Aabb {
             && self.min.z < o.max.z
             && self.max.z > o.min.z
     }
+    /// Shortest distance from a point to the box, zero when the point is
+    /// inside it. Used to decide whether a hit landed close enough to the
+    /// head box to count as a head shot.
+    pub fn distance_to(&self, p: Vec3) -> f32 {
+        let dx = (self.min.x - p.x).max(0.0).max(p.x - self.max.x);
+        let dy = (self.min.y - p.y).max(0.0).max(p.y - self.max.y);
+        let dz = (self.min.z - p.z).max(0.0).max(p.z - self.max.z);
+        sqrt(dx * dx + dy * dy + dz * dz)
+    }
     pub fn contains(&self, p: Vec3) -> bool {
         p.x >= self.min.x
             && p.x <= self.max.x

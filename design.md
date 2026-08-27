@@ -146,7 +146,7 @@ Two deliberate consequences fall out of this table:
 - **Ridge punishes body spam harder than any weapon rewards it.** Three body shots at 500 ms is the slowest kill in the game; one head shot is the fastest. Handing a mediocre player a Ridge is not a gift, it is a question.
 - **Arc has travel time.** At 30 m a target is roughly 170 ms of lead. It is the only weapon where the skill is prediction rather than reaction, and it is the weapon that separates good players from great ones on the open maps.
 
-**Universal rules:** no bullet drop. No sway while stationary. Headshot hitbox is generous and identical on every character — character choice never changes how hard you are to hit. Sprint-to-fire delay is 120 ms on all four; ADS time varies (Sting 180 ms, Arc 220 ms, Ridge 280 ms, Maul hip-fire only).
+**Universal rules:** no bullet drop. No sway while stationary. Headshot hitbox is generous and identical on every character — character choice never changes how hard you are to hit, and a hit landing within 16 cm of the head box is scored as a headshot, so a clipped neck reads the way it looked. Sprinting no longer holds the trigger: you can fire at a run, and for 120 ms after one, at a widened cone; ADS time varies (Sting 180 ms, Arc 220 ms, Ridge 280 ms, Maul hip-fire only).
 
 **Secondary:** everyone carries the same sidearm, the **Tack** — 8 rounds, 30 body / 65 head, fast swap (0.25 s). Two head shots kill. It exists so that running dry is a decision point, not a death sentence.
 

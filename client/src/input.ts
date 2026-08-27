@@ -13,8 +13,10 @@ const KEY_BUTTONS: Record<string, number> = {
   KeyD: BTN.RIGHT,
   Space: BTN.JUMP,
   ControlLeft: BTN.CROUCH,
+  ControlRight: BTN.CROUCH,
   KeyC: BTN.CROUCH,
   ShiftLeft: BTN.SPRINT,
+  ShiftRight: BTN.SPRINT,
   KeyR: BTN.RELOAD,
   KeyQ: BTN.ABILITY,
   KeyF: BTN.ABILITY,
@@ -48,9 +50,12 @@ export class InputState {
     window.addEventListener("mouseup", this.onMouseUp);
     window.addEventListener("mousemove", this.onMouseMove);
     document.addEventListener("pointerlockchange", this.onPointerLockChange);
-    window.addEventListener("blur", () => {
-      this.keys.clear();
-      this.buttons = 0;
+    // Anything that stops key events reaching the page must also drop the
+    // keys already held, or the player walks into a wall forever: a lost
+    // focus, a hidden tab, or a window the compositor took away.
+    window.addEventListener("blur", () => this.clearKeys());
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) this.clearKeys();
     });
   }
 
@@ -85,10 +90,7 @@ export class InputState {
 
   private onPointerLockChange = () => {
     this.locked = document.pointerLockElement === this.canvas;
-    if (!this.locked) {
-      this.keys.clear();
-      this.buttons = 0;
-    }
+    if (!this.locked) this.clearKeys();
     this.onLockChange(this.locked);
   };
 
@@ -108,14 +110,18 @@ export class InputState {
       if (n >= 1 && n <= 4) this.onWeaponKey(n);
     }
     if (!this.locked) return;
-    if (e.code === "Space") e.preventDefault();
+    // Every bound key is claimed outright while the pointer is locked. Space
+    // scrolls, and Control and C are the first half of a browser shortcut on
+    // every platform — Ctrl+W, Ctrl+D, Ctrl+C and the rest. Left to itself the
+    // browser acts on the combination and the game never sees a clean crouch.
+    if (KEY_BUTTONS[e.code] !== undefined) e.preventDefault();
     this.keys.add(e.code);
-    this.recompute();
+    this.recompute(e);
   };
 
   private onKeyUp = (e: KeyboardEvent) => {
     this.keys.delete(e.code);
-    this.recompute();
+    this.recompute(e);
   };
 
   private onMouseDown = (e: MouseEvent) => {
@@ -142,12 +148,44 @@ export class InputState {
     while (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
   };
 
-  private recompute() {
+  /**
+   * Rebuild the button mask from the keys currently held.
+   *
+   * Modifiers get a second source of truth. A key event carries the live
+   * state of Control and Shift in `ctrlKey` / `shiftKey`, and that state is
+   * correct even when the keydown or the keyup itself went missing — which is
+   * exactly what happens when a modifier combination is swallowed by the
+   * browser or the window loses focus mid-chord. Without this, one lost event
+   * leaves crouch stuck on, or off, until the key is pressed again.
+   */
+  private recompute(e?: KeyboardEvent) {
     let b = this.buttons & (BTN.FIRE | BTN.ADS);
     for (const code of this.keys) {
       const bit = KEY_BUTTONS[code];
       if (bit) b |= bit;
     }
+    if (e) {
+      if (e.ctrlKey) {
+        b |= BTN.CROUCH;
+      } else {
+        this.keys.delete("ControlLeft");
+        this.keys.delete("ControlRight");
+        if (!this.keys.has("KeyC")) b &= ~BTN.CROUCH;
+      }
+      if (e.shiftKey) {
+        b |= BTN.SPRINT;
+      } else {
+        this.keys.delete("ShiftLeft");
+        this.keys.delete("ShiftRight");
+        b &= ~BTN.SPRINT;
+      }
+    }
     this.buttons = b;
+  }
+
+  /** Drop every held key. Used whenever the page stops receiving key events. */
+  clearKeys() {
+    this.keys.clear();
+    this.buttons = 0;
   }
 }

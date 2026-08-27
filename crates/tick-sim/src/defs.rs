@@ -34,8 +34,25 @@ pub const GRAVITY: f32 = 22.0;
 pub const JUMP_SPEED: f32 = 7.2;
 pub const STEP_HEIGHT: f32 = 0.45;
 
-/// Sprint-to-fire delay, identical on every weapon.
-pub const SPRINT_FIRE_DELAY: f32 = 0.12;
+/// How long after a sprint a shot still carries the sprint spread penalty,
+/// so the cost tapers off instead of vanishing the instant Shift is released.
+pub const SPRINT_SPREAD_LINGER: f32 = 0.12;
+
+/// Spread multiplier applied while sprinting. Running and gunning is allowed
+/// on every weapon; it just costs accuracy rather than costing the shot.
+pub const SPRINT_SPREAD_MULT: f32 = 1.6;
+
+/// A hit this close to the head box still counts as a head shot. Wide enough
+/// that a shot clipping the neck or the top of a shoulder reads the way it
+/// looked, narrow enough that a centre-mass hit never does.
+pub const HEAD_GRACE: f32 = 0.16;
+
+/// Level geometry is built to one of two heights and nothing in between: a
+/// top at or below `MANTLE_HEIGHT` is cleared with a single jump (the jump
+/// apex is JUMP_SPEED^2 / 2 GRAVITY = 1.18 m), and anything a player is not
+/// meant to climb is at least `WALL_HEIGHT` tall so it reads as a wall.
+pub const MANTLE_HEIGHT: f32 = 1.10;
+pub const WALL_HEIGHT: f32 = 3.20;
 
 /// Horizontal acceleration toward the Night sky's black hole (+X horizon).
 /// Ground friction (9/s) caps the standing drift at PULL/9 ≈ 0.28 m/s —
@@ -448,6 +465,10 @@ pub struct Brush {
     /// Set when glass has been broken. A broken brush is skipped by every
     /// collision and trace query, and the client is told to stop drawing it.
     pub broken: bool,
+    /// Scenery: a rock, a tree trunk, a hedge. The simulation treats it like
+    /// any other brush; the renderer dresses it as terrain instead of as
+    /// architecture, and the height rule above does not apply to it.
+    pub natural: bool,
 }
 
 pub struct MapData {
@@ -467,6 +488,7 @@ fn solid(cx: f32, cy: f32, cz: f32, hx: f32, hy: f32, hz: f32) -> Brush {
         thin: false,
         glass: false,
         broken: false,
+        natural: false,
     }
 }
 
@@ -476,6 +498,7 @@ fn thin(cx: f32, cy: f32, cz: f32, hx: f32, hy: f32, hz: f32) -> Brush {
         thin: true,
         glass: false,
         broken: false,
+        natural: false,
     }
 }
 
@@ -485,6 +508,19 @@ fn glass(cx: f32, cy: f32, cz: f32, hx: f32, hy: f32, hz: f32) -> Brush {
         thin: true,
         glass: true,
         broken: false,
+        natural: false,
+    }
+}
+
+/// Terrain: rock, boulder, tree trunk, hedge. Collides exactly like `solid`,
+/// but the renderer gives it an organic silhouette instead of a box.
+fn nature(cx: f32, cy: f32, cz: f32, hx: f32, hy: f32, hz: f32) -> Brush {
+    Brush {
+        aabb: Aabb::from_center(v3(cx, cy, cz), v3(hx, hy, hz)),
+        thin: false,
+        glass: false,
+        broken: false,
+        natural: true,
     }
 }
 
@@ -506,34 +542,40 @@ pub fn load_map(id: MapId) -> MapData {
         // length of the hall.
         MapId::Vault => {
             let mut b = shell(18.0, 26.0, 7.0);
-            // Corridor dividers, leaving a wide central hall.
+            // Corridor dividers: full walls, so the flanking routes are
+            // committed rather than half-vaultable.
             for z in [-18.0f32, -6.0, 6.0, 18.0] {
-                b.push(solid(-9.5, 1.6, z, 0.6, 1.6, 4.0));
-                b.push(solid(9.5, 1.6, z, 0.6, 1.6, 4.0));
+                b.push(solid(-9.5, 2.0, z, 0.6, 2.0, 4.0));
+                b.push(solid(9.5, 2.0, z, 0.6, 2.0, 4.0));
             }
-            // Record stacks inside the flanking corridors.
+            // Record stacks inside the flanking corridors: 1.1 m, so every
+            // one of them is cover you can also stand on.
             for z in [-21.0f32, -13.0, -3.0, 7.0, 17.0] {
-                b.push(solid(-14.0, 1.3, z, 2.5, 1.3, 1.2));
-                b.push(solid(14.0, 1.3, z, 2.5, 1.3, 1.2));
+                b.push(solid(-14.0, 0.55, z, 2.5, 0.55, 1.2));
+                b.push(solid(14.0, 0.55, z, 2.5, 0.55, 1.2));
             }
-            // Hall furniture: low crates and two pillars.
-            b.push(solid(0.0, 0.6, -8.0, 3.0, 0.6, 1.2));
-            b.push(solid(0.0, 0.6, 8.0, 3.0, 0.6, 1.2));
+            // Hall furniture: mantle-height crates and two full-height pillars.
+            b.push(solid(0.0, 0.55, -8.0, 3.0, 0.55, 1.2));
+            b.push(solid(0.0, 0.55, 8.0, 3.0, 0.55, 1.2));
             b.push(solid(-4.0, 2.5, 0.0, 0.8, 2.5, 0.8));
             b.push(solid(4.0, 2.5, 0.0, 0.8, 2.5, 0.8));
-            // Catwalks over the hall, reachable from the end ramps.
+            // Catwalks over the hall, reachable from the end stairs.
             b.push(solid(-6.0, 3.2, 0.0, 1.6, 0.2, 20.0));
             b.push(solid(6.0, 3.2, 0.0, 1.6, 0.2, 20.0));
             b.push(solid(0.0, 3.2, -20.0, 7.6, 0.2, 2.0));
             b.push(solid(0.0, 3.2, 20.0, 7.6, 0.2, 2.0));
-            // Ramps up to the catwalk decks.
-            b.push(solid(0.0, 1.0, -23.5, 3.0, 1.0, 1.5));
-            b.push(solid(0.0, 2.1, -22.0, 3.0, 1.1, 1.5));
-            b.push(solid(0.0, 1.0, 23.5, 3.0, 1.0, 1.5));
-            b.push(solid(0.0, 2.1, 22.0, 3.0, 1.1, 1.5));
-            // Thin partitions Arc can shoot through.
-            b.push(thin(-9.5, 1.6, 0.0, 0.3, 1.6, 2.0));
-            b.push(thin(9.5, 1.6, 0.0, 0.3, 1.6, 2.0));
+            // End stairs up to the catwalk decks. Three treads at 1.0 / 2.0 /
+            // 3.0, then a 0.4 m step onto the 3.4 m deck: every rise is inside
+            // a single jump, which the old two-block ramp's 2.0 m first step
+            // was not.
+            for s in [1.0f32, -1.0] {
+                b.push(solid(0.0, 0.5, 25.2 * s, 3.0, 0.5, 0.6));
+                b.push(solid(0.0, 1.0, 24.0 * s, 3.0, 1.0, 0.6));
+                b.push(solid(0.0, 1.5, 22.8 * s, 3.0, 1.5, 0.8));
+            }
+            // Thin partitions Arc can shoot through, at divider height.
+            b.push(thin(-9.5, 2.0, 0.0, 0.3, 2.0, 2.0));
+            b.push(thin(9.5, 2.0, 0.0, 0.3, 2.0, 2.0));
             // Vaultable mid-hall barrier: 0.9 m, cleared with one jump.
             b.push(solid(0.0, 0.45, 0.0, 4.0, 0.45, 0.5));
             // Crate stairways up to the catwalks mid-hall, mirrored on both
@@ -572,12 +614,17 @@ pub fn load_map(id: MapId) -> MapData {
             for gx in [-16.0f32, -8.0, 8.0, 16.0] {
                 for gz in [-16.0f32, -8.0, 0.0, 8.0, 16.0] {
                     rows += 1;
-                    let h = if rows % 3 == 0 { 2.6 } else { 1.3 };
+                    // Either a stacked container you cannot climb, or a
+                    // single one at mantle height that you can. Nothing in
+                    // between, so a lane always reads as either blocked or
+                    // crossable at a glance.
+                    let h = if rows % 3 == 0 { 1.7 } else { 0.55 };
                     b.push(Brush {
                         aabb: Aabb::from_center(v3(gx, h, gz), v3(3.0, h, 1.4)),
                         thin: rows % 4 == 0,
                         glass: false,
                         broken: false,
+                        natural: false,
                     });
                 }
             }
@@ -599,7 +646,13 @@ pub fn load_map(id: MapId) -> MapData {
             // Boulders between the container rows: jumpable cover that reads
             // as terrain rather than cargo.
             for (bx, bz) in [(12.0f32, -4.0f32), (-12.0, 4.0), (4.0, 12.0), (-4.0, -12.0)] {
-                b.push(solid(bx, 0.45, bz, 1.1, 0.45, 1.3));
+                b.push(nature(bx, 0.45, bz, 1.1, 0.45, 1.3));
+            }
+            // A stand of trees along the north-west lane: cover that is not
+            // cargo, and the only thing on Depot taller than the containers.
+            for (tx, tz) in [(-18.0f32, 12.0f32), (18.0, -12.0), (-6.0, 19.5), (6.0, -19.5)] {
+                b.push(nature(tx, 0.35, tz, 0.9, 0.35, 0.9));
+                b.push(nature(tx, 1.55, tz, 0.28, 1.2, 0.28));
             }
             MapData {
                 id,
@@ -632,19 +685,22 @@ pub fn load_map(id: MapId) -> MapData {
             b.push(glass(3.5, 1.7, 4.0, 3.5, 1.7, 0.15));
             b.push(glass(-7.0, 1.7, 0.0, 0.15, 1.7, 4.0));
             b.push(glass(7.0, 1.7, 0.0, 0.15, 1.7, 4.0));
-            // Kitchen corridor.
-            b.push(solid(-11.0, 1.5, -6.0, 0.5, 1.5, 8.0));
-            b.push(solid(-11.0, 1.5, 10.0, 0.5, 1.5, 5.0));
+            // Kitchen corridor: full-height partition walls.
+            b.push(solid(-11.0, 1.7, -6.0, 0.5, 1.7, 8.0));
+            b.push(solid(-11.0, 1.7, 10.0, 0.5, 1.7, 5.0));
+            // Kitchen counters: 1.1 m, so the corridor can be fought over the
+            // top of them and crossed on top of them.
             for z in [-12.0f32, -4.0, 4.0, 12.0] {
-                b.push(solid(-13.5, 0.9, z, 2.0, 0.9, 1.0));
+                b.push(solid(-13.5, 0.55, z, 2.0, 0.55, 1.0));
             }
-            // Terrace furniture.
+            // Terrace furniture, same rule.
             for z in [-10.0f32, 0.0, 10.0] {
-                b.push(solid(12.0, 0.7, z, 2.5, 0.7, 1.5));
+                b.push(solid(12.0, 0.55, z, 2.5, 0.55, 1.5));
             }
-            // Awning deck with a one-way drop onto the terrace.
+            // Awning deck with a one-way drop onto the terrace, and the
+            // corner pier that carries it, built flush with the deck.
             b.push(solid(9.0, 3.0, -16.0, 6.0, 0.2, 3.0));
-            b.push(solid(14.0, 1.5, -19.0, 1.5, 1.5, 1.0));
+            b.push(solid(14.0, 1.6, -19.0, 1.5, 1.6, 1.0));
             // Crates that climb up to the awning deck: 1.0 then 2.1, then a
             // 1.1 m hop onto the deck — a second way up besides the drop.
             b.push(solid(3.5, 0.5, -16.0, 0.8, 0.5, 0.8));
@@ -652,18 +708,18 @@ pub fn load_map(id: MapId) -> MapData {
             // Matching platform and crates on the B side so neither team owns
             // the only high ground.
             b.push(solid(9.0, 3.0, 16.0, 6.0, 0.2, 3.0));
-            b.push(solid(14.0, 1.5, 19.0, 1.5, 1.5, 1.0));
+            b.push(solid(14.0, 1.6, 19.0, 1.5, 1.6, 1.0));
             b.push(solid(3.5, 0.5, 16.0, 0.8, 0.5, 0.8));
             b.push(solid(5.2, 1.05, 16.0, 0.8, 1.05, 0.8));
             // Planters with trees: a solid jumpable base and a slim trunk the
             // renderer dresses with a canopy. Real cover, natural silhouette.
             for (px, pz) in [(-13.5f32, 7.0f32), (13.5, 7.0), (-13.5, -7.0), (13.5, -7.0)] {
-                b.push(solid(px, 0.35, pz, 0.9, 0.35, 0.9));
-                b.push(solid(px, 1.55, pz, 0.28, 1.2, 0.28));
+                b.push(nature(px, 0.35, pz, 0.9, 0.35, 0.9));
+                b.push(nature(px, 1.55, pz, 0.28, 1.2, 0.28));
             }
             // Hedge rows flanking the atrium: 0.75 m, vaultable.
-            b.push(solid(0.0, 0.375, -8.0, 2.6, 0.375, 0.5));
-            b.push(solid(0.0, 0.375, 8.0, 2.6, 0.375, 0.5));
+            b.push(nature(0.0, 0.375, -8.0, 2.6, 0.375, 0.5));
+            b.push(nature(0.0, 0.375, 8.0, 2.6, 0.375, 0.5));
             MapData {
                 id,
                 brushes: b,
@@ -699,12 +755,16 @@ pub fn load_map(id: MapId) -> MapData {
             b.push(solid(18.5, 2.0, 0.0, 0.6, 2.0, 20.0));
             b.push(solid(-17.2, 4.2, 0.0, 1.9, 0.2, 20.0));
             b.push(solid(17.2, 4.2, 0.0, 1.9, 0.2, 20.0));
-            // Control room deck at centre, reached by two ramps.
+            // Control room deck at centre, reached from either end by three
+            // treads at 1.1 / 2.2 / 3.15 and a last 0.5 m step onto the deck.
+            // Every rise clears in one jump; the pair of 2.4 m blocks this
+            // replaces could not be climbed from the floor at all.
             b.push(solid(0.0, 3.4, 0.0, 5.0, 0.25, 5.0));
-            b.push(solid(0.0, 1.2, -7.0, 2.0, 1.2, 2.5));
-            b.push(solid(0.0, 2.4, -5.0, 2.0, 1.2, 2.5));
-            b.push(solid(0.0, 1.2, 7.0, 2.0, 1.2, 2.5));
-            b.push(solid(0.0, 2.4, 5.0, 2.0, 1.2, 2.5));
+            for s in [1.0f32, -1.0] {
+                b.push(solid(0.0, 0.55, 9.8 * s, 2.0, 0.55, 1.2));
+                b.push(solid(0.0, 1.1, 8.6 * s, 2.0, 1.1, 1.2));
+                b.push(solid(0.0, 1.575, 6.2 * s, 2.0, 1.575, 1.2));
+            }
             // Shutters down each flank of the control room: thin, so Arc can
             // contest the deck through them, and fixed, so the sightline they
             // leave is the same one every round.
@@ -713,12 +773,19 @@ pub fn load_map(id: MapId) -> MapData {
             // Boulders along the open approach: jumpable tops, natural cover
             // on an otherwise architectural map. Mirrored in z.
             for (bx, bz) in [(5.0f32, 12.0f32), (-5.0, 12.0), (5.0, -12.0), (-5.0, -12.0)] {
-                b.push(solid(bx, 0.45, bz, 1.1, 0.45, 1.3));
+                b.push(nature(bx, 0.45, bz, 1.1, 0.45, 1.3));
             }
             // Bigger rocks near the corners: full hides you can also mantle
             // from the low boulder side (1.1 m tops).
             for (bx, bz) in [(13.5f32, 18.0f32), (-13.5, 18.0), (13.5, -18.0), (-13.5, -18.0)] {
-                b.push(solid(bx, 0.55, bz, 1.6, 0.55, 1.2));
+                b.push(nature(bx, 0.55, bz, 1.6, 0.55, 1.2));
+            }
+            // Trees down both flanks of the approach: the only tall cover on
+            // the open half of the map, and the only thing on it that is not
+            // poured concrete.
+            for (tx, tz) in [(-12.5f32, 4.0f32), (12.5, 4.0), (-12.5, -4.0), (12.5, -4.0)] {
+                b.push(nature(tx, 0.35, tz, 0.9, 0.35, 0.9));
+                b.push(nature(tx, 1.55, tz, 0.28, 1.2, 0.28));
             }
             MapData {
                 id,

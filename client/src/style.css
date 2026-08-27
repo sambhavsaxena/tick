@@ -262,6 +262,48 @@ html, body {
   line-height: 1.5;
 }
 
+/* Reload loader: a ring that fills under the crosshair, plus its caption.
+   Sized so it never reaches the crosshair itself. */
+
+#reloadRing {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 46px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+#reloadRing .ring {
+  --p: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--warn) calc(var(--p) * 360deg),
+    rgba(232, 237, 243, 0.16) 0
+  );
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+}
+#reloadRing .ring i {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(10, 14, 19, 0.85);
+}
+#reloadRing span {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--warn);
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+}
+
 /* ---------------------------------------------------------------- lobby */
 
 #lobby, #results, #standby, #spawnCard {
@@ -272,6 +314,15 @@ html, body {
   justify-content: center;
   background: radial-gradient(ellipse at 50% 30%, #131a22 0%, #080b0f 70%);
   z-index: 10;
+}
+
+/* The lobby is a scrim over a live match playing behind it, not a solid
+   panel: dark enough at the centre to read type over, clear enough at the
+   edges to see the map. */
+#lobby {
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(6, 9, 13, 0.88) 0%, rgba(6, 9, 13, 0.45) 55%, rgba(6, 9, 13, 0.72) 100%);
+  backdrop-filter: blur(1.5px);
 }
 
 /* The bottom padding reserves the control strip's row, so centred content
@@ -328,6 +379,28 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
   height: 1.4rem;
   margin-top: 0.9rem;
 }
+
+/* Matchmaking screen: its own translucent layer above the lobby, so clicking
+   Play covers the lobby rather than rearranging it. */
+#searching {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 9, 13, 0.72);
+  backdrop-filter: blur(7px);
+  animation: fadeIn 0.18s ease-out;
+}
+.searchingInner { text-align: center; }
+.searchingNote {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: #5f6b76;
+  margin-top: 1.6rem;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* Queue wait: spinner + elapsed clock so the screen never looks frozen. */
 #queueWait {
@@ -396,16 +469,40 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 
 /* -------------------------------------------------------------- results */
 
+/* A headline this large needs the panel to scroll on a short window rather
+   than push the score table off the bottom of the screen. */
+#results { overflow-y: auto; padding: 2rem 0; }
 .resultsInner { width: min(58rem, 92vw); }
+/* The result of the match is the first thing on the screen and the largest
+   thing on it: one word, in the colour that word means. */
 #outcome {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: clamp(3.2rem, 11vw, 7rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  text-align: center;
+  animation: outcomeIn 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#outcome.win { color: #43e08a; text-shadow: 0 0 34px rgba(67, 224, 138, 0.4); }
+#outcome.lose { color: var(--bad); text-shadow: 0 0 34px rgba(255, 45, 85, 0.35); }
+#outcome.draw { color: var(--warn); text-shadow: 0 0 34px rgba(255, 212, 71, 0.3); }
+#outcomeNote {
+  font-family: var(--mono);
+  font-size: 0.7rem;
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--dim);
   text-align: center;
+  margin-top: 0.6rem;
 }
-.arBlock { text-align: center; margin: 0.5rem 0 1.5rem; }
+@keyframes outcomeIn {
+  from { opacity: 0; transform: scale(1.18); letter-spacing: 0.3em; }
+  to { opacity: 1; transform: scale(1); letter-spacing: 0.06em; }
+}
+.arBlock { text-align: center; margin: 1.6rem 0 1.5rem; }
 .arNumber {
   font-family: var(--mono);
   font-size: clamp(5rem, 18vw, 11rem);
@@ -475,6 +572,7 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) {
   .spinner, #eventBanner.telegraph { animation: none; }
   .bonusRow { animation-duration: 0.01s; }
+  #outcome, #searching { animation: none; }
 }
 
 /* --------------------------------------------------------- damage numbers */

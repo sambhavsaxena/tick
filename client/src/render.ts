@@ -33,34 +33,54 @@ export interface RenderPlayer {
 }
 
 interface WeatherLook {
+  /** Haze colour close to the player. */
   fog: number;
   fogNear: number;
   fogFar: number;
+  /**
+   * The sky itself, painted behind everything. Kept separate from the fog so
+   * a clear day can have a blue sky over a pale horizon haze instead of one
+   * flat grey filling both jobs.
+   */
+  sky: number;
   ambient: number;
   ambientIntensity: number;
   sun: number;
   sunIntensity: number;
+  /** The ground plane: earth, not concrete. */
   ground: number;
+  /** Worn dirt tracks across the ground plane. */
+  path: number;
+  /** Grass, hedges and canopy under this light. */
+  foliage: number;
   rain: boolean;
 }
 
 const LOOKS: WeatherLook[] = [
-  // Clear: long sightlines, harsh directional shadows, warm and well-lit.
+  // Clear: blue sky, warm sun, dry grass and dust. Long sightlines and hard
+  // directional shadows.
   {
-    fog: 0xb8c2c8, fogNear: 50, fogFar: 210, ambient: 0xa8b6c0, ambientIntensity: 1.05,
-    sun: 0xffe8c8, sunIntensity: 1.8, ground: 0xa8b0b6, rain: false,
+    fog: 0xcfdbe4, fogNear: 60, fogFar: 230, sky: 0x74aee0,
+    ambient: 0xbfd4e6, ambientIntensity: 1.1,
+    sun: 0xfff0d2, sunIntensity: 1.9, ground: 0x7f8a55, path: 0x9a7346,
+    foliage: 0x4f7a3f, rain: false,
   },
-  // Rain: visibility falls off past 45 m, flat and cold but still readable.
+  // Rain: visibility falls off past 45 m, everything soaked a shade darker
+  // and the tracks turn to mud.
   {
-    fog: 0x66727e, fogNear: 10, fogFar: 56, ambient: 0x8494a2, ambientIntensity: 0.9,
-    sun: 0xc8d4de, sunIntensity: 0.6, ground: 0x5e6870, rain: true,
+    fog: 0x6b7986, fogNear: 10, fogFar: 56, sky: 0x5c6a78,
+    ambient: 0x8fa2b0, ambientIntensity: 0.9,
+    sun: 0xc8d4de, sunIntensity: 0.6, ground: 0x4d5a3c, path: 0x5c452c,
+    foliage: 0x3a5c31, rain: true,
   },
   // Night: about 30 m of usable sight, and your muzzle flash is a flare.
   // Dark enough that ambush beats aim, light enough that geometry still reads
   // as geometry — an unreadable map is not atmosphere, it is a bug.
   {
-    fog: 0x0c1219, fogNear: 6, fogFar: 34, ambient: 0x35496a, ambientIntensity: 0.95,
-    sun: 0x5d7ba6, sunIntensity: 0.45, ground: 0x1d2530, rain: false,
+    fog: 0x0c1219, fogNear: 6, fogFar: 34, sky: 0x070c14,
+    ambient: 0x35496a, ambientIntensity: 0.95,
+    sun: 0x5d7ba6, sunIntensity: 0.45, ground: 0x222b1e, path: 0x2b2419,
+    foliage: 0x1d3520, rain: false,
   },
 ];
 
@@ -312,9 +332,10 @@ export class Renderer {
       this.sun.color.setHex(0x2fbf6a);
     } else {
       this.scene.fog = new THREE.Fog(look.fog, look.fogNear, look.fogFar);
-      this.scene.background = new THREE.Color(look.fog);
+      this.scene.background = new THREE.Color(look.sky);
       this.ambient.color.setHex(look.ambient);
-      this.ambient.groundColor.setHex(0x22282e);
+      // Bounce light comes off the ground, so it should be the ground's colour.
+      this.ambient.groundColor.setHex(look.ground);
       this.ambient.intensity = look.ambientIntensity;
       this.sun.color.setHex(look.sun);
       this.sun.intensity = look.sunIntensity;
@@ -340,6 +361,33 @@ export class Renderer {
         opacity,
         depthWrite: false,
       });
+
+    // Sky dome: a vertical gradient from the look's sky colour overhead down
+    // to the haze colour at the horizon, so the sky reads as depth rather
+    // than as one flat fill behind the geometry. Vertex colours rather than a
+    // shader, because that is all a two-stop gradient needs.
+    const look = LOOKS[this.weather] ?? LOOKS[0];
+    const dome = new THREE.SphereGeometry(1100, 24, 16);
+    const top = new THREE.Color(look.sky);
+    const horizon = new THREE.Color(look.fog);
+    const pos = dome.getAttribute("position") as THREE.BufferAttribute;
+    const colors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      // Squared blend keeps the horizon band tight and the zenith broad, the
+      // way a real sky reads.
+      const t = Math.max(0, Math.min(1, pos.getY(i) / 700));
+      const c = horizon.clone().lerp(top, t * t * 0.7 + t * 0.3);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+    dome.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    this.vistaGroup.add(
+      new THREE.Mesh(
+        dome,
+        new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }),
+      ),
+    );
 
     // Ocean: an enormous disc just below floor level, out to the horizon.
     const oceanColor = this.weather === 2 ? 0x060a12 : this.weather === 1 ? 0x24404e : 0x2a5a78;
@@ -427,9 +475,19 @@ export class Renderer {
     );
     const floorMat = new THREE.MeshLambertMaterial({ color: look.ground, map: surface("ground") });
     const thinMat = new THREE.MeshLambertMaterial({ color: 0xb2895e, map: surface("wood") });
+    // Everything at mantle height is crate timber rather than poured concrete,
+    // so the things you can climb on look different from the things you cannot.
+    const crateMats = [0xb08c55, 0xa07f4c, 0xbd9a63].map(
+      (color) => new THREE.MeshLambertMaterial({ color, map: surface("wood") }),
+    );
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4a32, map: surface("wood") });
     const rockMat = new THREE.MeshLambertMaterial({ color: 0x7d8188, map: surface("rock") });
-    const canopyMats = [0x4a7a4e, 0x3e6b44, 0x568a52].map(
+    const soilMat = new THREE.MeshLambertMaterial({ color: 0x4a3a29, map: surface("ground") });
+    const planterMat = new THREE.MeshLambertMaterial({ color: 0x9c9384, map: surface("concrete") });
+    const canopyMats = [look.foliage, 0x3e6b44, 0x568a52].map(
+      (color) => new THREE.MeshLambertMaterial({ color }),
+    );
+    const hedgeMats = [look.foliage, 0x44693f].map(
       (color) => new THREE.MeshLambertMaterial({ color }),
     );
     const glassMat = new THREE.MeshLambertMaterial({
@@ -443,6 +501,12 @@ export class Renderer {
     // Everything drawn for a given brush, so the meshes can be moved when the
     // brush moves and dropped when it is destroyed.
     this.brushParts.clear();
+    // Trunk footprints, so the low natural brush a trunk stands in is drawn as
+    // a planter rather than as a boulder with a tree growing out of it.
+    const trunkSpots = brushes
+      .filter((b) => b.natural && b.max[0] - b.min[0] <= 0.8 && b.max[1] - b.min[1] >= 1.8)
+      .map((b) => [(b.min[0] + b.max[0]) / 2, (b.min[2] + b.max[2]) / 2] as const);
+
     let ex = 10;
     let ez = 10;
     let brushIndex = -1;
@@ -463,12 +527,61 @@ export class Renderer {
       const cy = (b.min[1] + b.max[1]) / 2;
       const cz = (b.min[2] + b.max[2]) / 2;
       const isFloor = sy > 1.5 && b.max[1] <= 0.05;
-      // Dress collision boxes by their shape: slim tall boxes are tree
-      // trunks (and get a canopy), squat boxes hugging the ground are rocks.
-      const isTrunk = !b.thin && !b.glass && sx <= 0.8 && sz <= 0.8 && sy >= 1.8;
-      const isRock =
-        !b.thin && !b.glass && !isFloor && b.min[1] <= 0.05 && sy <= 1.2 &&
-        sx >= 1.6 && sx <= 4.2 && sz >= 1.6 && sz <= 4.2;
+      // Scenery is flagged by the simulation, not guessed at from its shape:
+      // the same brush list drives collision and dressing, and a crate that
+      // happens to be boulder-sized must never come out of the ground as a
+      // rock. Within scenery, proportions pick the silhouette.
+      const isTrunk = b.natural && sx <= 0.8 && sz <= 0.8 && sy >= 1.8;
+      const isHedge =
+        b.natural && !isTrunk && sy <= 0.9 && Math.max(sx, sz) / Math.max(0.01, Math.min(sx, sz)) >= 2.5;
+      const isPlanter =
+        b.natural && !isTrunk && !isHedge &&
+        trunkSpots.some(([tx, tz]) => tx > b.min[0] && tx < b.max[0] && tz > b.min[2] && tz < b.max[2]);
+      const isRock = b.natural && !isTrunk && !isHedge && !isPlanter;
+      // A crate is anything at mantle height standing on the floor: timber,
+      // not concrete, because it is a thing you climb rather than a wall.
+      const isCrate =
+        !b.natural && !b.thin && !b.glass && !isFloor && b.min[1] <= 0.05 && sy <= 1.25;
+
+      if (isHedge) {
+        // A run of squashed blobs along the brush's long axis: the same
+        // footprint, read as planting rather than as a low wall.
+        const alongX = sx >= sz;
+        const span = alongX ? sx : sz;
+        const n = Math.max(2, Math.round(span / 1.1));
+        for (let k = 0; k < n; k++) {
+          const t = n > 1 ? k / (n - 1) - 0.5 : 0;
+          const blob = new THREE.Mesh(
+            new THREE.IcosahedronGeometry(Math.min(sx, sz) * 0.62 + 0.16, 0),
+            hedgeMats[k % hedgeMats.length],
+          );
+          blob.scale.set(1, sy / (Math.min(sx, sz) * 0.62 + 0.16), 1);
+          blob.position.set(
+            cx + (alongX ? t * (span - 0.6) : 0),
+            b.min[1] + sy * 0.55,
+            cz + (alongX ? 0 : t * (span - 0.6)),
+          );
+          blob.rotation.y = (brushIndex + k) * 0.8;
+          blob.castShadow = true;
+          blob.receiveShadow = true;
+          add(blob);
+        }
+        continue;
+      }
+
+      if (isPlanter) {
+        // A stone rim with soil sitting proud of it — the thing a tree is
+        // actually planted in on a rooftop terrace.
+        const rim = new THREE.Mesh(tileBox(new THREE.BoxGeometry(sx, sy, sz), sx, sy, sz), planterMat);
+        rim.position.set(cx, cy, cz);
+        rim.castShadow = true;
+        rim.receiveShadow = true;
+        add(rim);
+        const soil = new THREE.Mesh(new THREE.BoxGeometry(sx * 0.82, 0.1, sz * 0.82), soilMat);
+        soil.position.set(cx, b.max[1] + 0.03, cz);
+        add(soil);
+        continue;
+      }
 
       if (isTrunk) {
         // A tapered trunk plus a clumped three-blob canopy above head
@@ -520,9 +633,11 @@ export class Renderer {
         ? thinMat
         : isFloor
         ? floorMat
+        : isCrate
+        ? crateMats[brushIndex % crateMats.length]
         : solidMats[brushIndex % solidMats.length];
       const geo = new THREE.BoxGeometry(sx, sy, sz);
-      if (!b.glass) tileBox(geo, sx, sy, sz, isFloor ? 4 : 2);
+      if (!b.glass) tileBox(geo, sx, sy, sz, isFloor ? 4 : isCrate ? 1.1 : 2);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(cx, cy, cz);
       if (!b.glass) {
@@ -578,9 +693,9 @@ export class Renderer {
       );
     }
 
-    this.buildGroundDetail();
+    this.buildGroundDetail(look);
     this.buildWallDetail();
-    this.buildScenery();
+    this.buildScenery(look);
     this.buildNeon();
     this.buildRain();
     this.setWeather(weather);
@@ -622,46 +737,80 @@ export class Renderer {
   }
 
   /**
-   * Life on the floor plane: a worn dirt path between the spawn ends, grass
-   * tufts and pebbles scattered deterministically. All of it sits millimetres
+   * Life on the floor plane: worn earth tracks between the spawn ends, grass,
+   * scrub and pebbles scattered deterministically. All of it sits millimetres
    * above the floor and collides with nothing.
+   *
+   * The tracks are opaque sand-and-mud rather than a faint tint, because they
+   * are the map's readable route: a player should be able to tell where the
+   * fighting happens from the colour of the ground.
    */
-  private buildGroundDetail() {
+  private buildGroundDetail(look: WeatherLook) {
     const { x: ex, z: ez } = this.mapExtent;
     const ix = ex - 2.2; // inside the boundary walls
     const iz = ez - 2.2;
 
-    // The main worn path runs the long axis (spawn to spawn), with a soft
-    // cross-lane through mid. Slight opacity so the ground texture shows
-    // through and the edge never reads as a hard decal.
     const pathMat = new THREE.MeshLambertMaterial({
-      color: 0x8a7b6a,
+      color: look.path,
       map: surface("ground"),
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.92,
       depthWrite: false,
     });
-    const main = new THREE.Mesh(new THREE.PlaneGeometry(3.2, iz * 2), pathMat);
-    main.rotation.x = -Math.PI / 2;
-    main.position.set(0, 0.015, 0);
-    main.receiveShadow = true;
-    const cross = new THREE.Mesh(new THREE.PlaneGeometry(ix * 2, 2.6), pathMat);
-    cross.rotation.x = -Math.PI / 2;
-    cross.position.set(0, 0.014, 0);
-    cross.receiveShadow = true;
-    this.mapGroup.add(main, cross);
+    // A soft-edged shoulder either side of each track, so earth meets grass in
+    // a gradient instead of at a cut line.
+    const shoulderMat = new THREE.MeshLambertMaterial({
+      color: look.path,
+      map: surface("ground"),
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+    });
+    const track = (w: number, l: number, x: number, z: number, y: number, rot = 0) => {
+      const lane = new THREE.Mesh(new THREE.PlaneGeometry(w, l), pathMat);
+      lane.rotation.x = -Math.PI / 2;
+      lane.rotation.z = rot;
+      lane.position.set(x, y, z);
+      lane.receiveShadow = true;
+      const shoulder = new THREE.Mesh(new THREE.PlaneGeometry(w + 1.8, l), shoulderMat);
+      shoulder.rotation.x = -Math.PI / 2;
+      shoulder.rotation.z = rot;
+      shoulder.position.set(x, y - 0.003, z);
+      this.mapGroup.add(lane, shoulder);
+    };
 
-    // Grass tufts: little cones in three greens, kept off the worn path.
-    const grassMats = [0x4f7a4a, 0x5d8a52, 0x44693f].map(
+    // The main track runs the long axis, spawn to spawn; a cross-lane runs
+    // through mid; two diagonals cut the corners the way players actually do.
+    track(3.4, iz * 2, 0, 0, 0.02);
+    track(2.8, ix * 2, 0, 0, 0.018, Math.PI / 2);
+    for (const s of [1, -1]) {
+      const len = Math.hypot(ix, iz) * 1.15;
+      track(2.0, len, 0, 0, 0.016, s * Math.atan2(ix, iz));
+    }
+
+    // Bare, trampled patches where the tracks meet.
+    for (let i = 0; i < 10; i++) {
+      const patch = new THREE.Mesh(
+        new THREE.CircleGeometry(0.9 + hash01(i, 61) * 1.6, 9),
+        shoulderMat,
+      );
+      patch.rotation.x = -Math.PI / 2;
+      patch.rotation.z = i;
+      patch.position.set((hash01(i, 67) - 0.5) * ix * 1.7, 0.022, (hash01(i, 71) - 0.5) * iz * 1.7);
+      this.mapGroup.add(patch);
+    }
+
+    // Grass tufts: little cones in three greens, kept off the worn tracks.
+    const grassMats = [look.foliage, 0x5d8a52, 0x44693f].map(
       (color) => new THREE.MeshLambertMaterial({ color }),
     );
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < 220; i++) {
       const x = (hash01(i, 3) - 0.5) * ix * 2;
       const z = (hash01(i, 7) - 0.5) * iz * 2;
-      if (Math.abs(x) < 2.2) continue; // stay off the main path
-      const h = 0.16 + hash01(i, 11) * 0.2;
+      if (Math.abs(x) < 2.4 || Math.abs(z) < 2.0) continue; // stay off the tracks
+      const h = 0.16 + hash01(i, 11) * 0.26;
       const tuft = new THREE.Mesh(
-        new THREE.ConeGeometry(0.09 + hash01(i, 17) * 0.08, h, 4),
+        new THREE.ConeGeometry(0.09 + hash01(i, 17) * 0.09, h, 4),
         grassMats[i % grassMats.length],
       );
       tuft.position.set(x, h / 2, z);
@@ -669,14 +818,33 @@ export class Renderer {
       this.mapGroup.add(tuft);
     }
 
-    // Pebbles.
-    const pebbleMat = new THREE.MeshLambertMaterial({ color: 0x82868c, map: surface("rock") });
-    for (let i = 0; i < 16; i++) {
+    // Low scrub: a handful of knee-high bushes, purely visual, kept small
+    // enough that they never hide a player who is standing in one.
+    const scrubMat = new THREE.MeshLambertMaterial({ color: look.foliage });
+    for (let i = 0; i < 22; i++) {
+      const x = (hash01(i, 41) - 0.5) * ix * 1.9;
+      const z = (hash01(i, 43) - 0.5) * iz * 1.9;
+      if (Math.abs(x) < 3.0 && Math.abs(z) < 3.0) continue;
+      const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.3 + hash01(i, 47) * 0.2, 0), scrubMat);
+      bush.scale.y = 0.55;
+      bush.position.set(x, 0.16, z);
+      bush.rotation.y = i;
+      this.mapGroup.add(bush);
+    }
+
+    // Pebbles, thickest along the tracks where the soil is worn away.
+    const pebbleMat = new THREE.MeshLambertMaterial({ color: 0x8a8071, map: surface("rock") });
+    for (let i = 0; i < 46; i++) {
       const pebble = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.08 + hash01(i, 23) * 0.12, 0),
+        new THREE.DodecahedronGeometry(0.07 + hash01(i, 23) * 0.13, 0),
         pebbleMat,
       );
-      pebble.position.set((hash01(i, 29) - 0.5) * ix * 2, 0.06, (hash01(i, 31) - 0.5) * iz * 2);
+      const onTrack = i % 2 === 0;
+      pebble.position.set(
+        onTrack ? (hash01(i, 29) - 0.5) * 3.0 : (hash01(i, 29) - 0.5) * ix * 2,
+        0.06,
+        (hash01(i, 31) - 0.5) * iz * 2,
+      );
       pebble.rotation.set(i, i * 2.3, 0);
       this.mapGroup.add(pebble);
     }
@@ -740,15 +908,25 @@ export class Renderer {
    * Tall trees and rock piles in a ring beyond the boundary walls — visible
    * over the wall line, never reachable, and deterministic per map size.
    */
-  private buildScenery() {
+  private buildScenery(look: WeatherLook) {
     this.sceneryGroup.clear();
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5d4028, map: surface("wood") });
-    const canopyMats = [0x3e6b44, 0x4a7a4e, 0x35603c].map(
+    const canopyMats = [look.foliage, 0x4a7a4e, 0x35603c].map(
       (color) => new THREE.MeshLambertMaterial({ color }),
     );
     const rockMat = new THREE.MeshLambertMaterial({ color: 0x6c7076, map: surface("rock") });
-    const bushMat = new THREE.MeshLambertMaterial({ color: 0x486e42 });
+    const bushMat = new THREE.MeshLambertMaterial({ color: look.foliage });
     const ring = Math.max(this.mapExtent.x, this.mapExtent.z);
+
+    // A skirt of ground outside the arena, so the world does not end at the
+    // wall line when you are up on a catwalk looking over it.
+    const apron = new THREE.Mesh(
+      new THREE.CircleGeometry(ring + 120, 44),
+      new THREE.MeshLambertMaterial({ color: look.ground, map: surface("ground") }),
+    );
+    apron.rotation.x = -Math.PI / 2;
+    apron.position.y = -0.45;
+    this.sceneryGroup.add(apron);
 
     // The near ring: mixed forest with undergrowth and outcrops.
     for (let i = 0; i < 34; i++) {

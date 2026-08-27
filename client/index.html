@@ -14,6 +14,12 @@
       <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
       <div id="hitmarker"></div>
 
+      <!-- Reload progress, right under the crosshair where the eye already is -->
+      <div id="reloadRing" class="hidden">
+        <div class="ring"><i></i></div>
+        <span>Reloading</span>
+      </div>
+
       <header id="scorebar">
         <div class="side a"><span class="label">ALPHA</span><span id="scoreA">0</span></div>
         <div class="mid">
@@ -66,11 +72,6 @@
         </p>
         <p class="nameRow" id="callsignNote">Connecting…</p>
         <button id="playButton">Play</button>
-        <div id="queueWait" class="hidden">
-          <div class="spinner"></div>
-          <span id="queueTimer">0:00</span>
-        </div>
-        <div id="queueState"></div>
         <p class="footnote">Body kill 100. Clean long-range headshot 325. That ratio is the game.</p>
       </div>
       <ul class="controls">
@@ -88,6 +89,19 @@
       </ul>
     </div>
 
+    <!-- Matchmaking: a translucent screen over the lobby, not a spinner
+         wedged into it, so the lobby stays exactly where the player left it -->
+    <div id="searching" class="hidden">
+      <div class="searchingInner">
+        <div id="queueWait">
+          <div class="spinner"></div>
+          <span id="queueTimer">0:00</span>
+        </div>
+        <div id="queueState">Finding a match…</div>
+        <p class="searchingNote">The server drafts your character, gun, map and weather.</p>
+      </div>
+    </div>
+
     <!-- Two second spawn card -->
     <div id="spawnCard" class="hidden">
       <div class="draft">
@@ -101,6 +115,7 @@
     <div id="results" class="hidden">
       <div class="resultsInner">
         <div id="outcome">Match over</div>
+        <div id="outcomeNote"></div>
         <div class="arBlock">
           <div class="arNumber" id="arNumber">0</div>
           <div class="arLabel">Aim Rating<span id="arDelta"></span></div>

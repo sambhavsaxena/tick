@@ -25,7 +25,8 @@ static mut STATE: [f32; 8] = [0.0; 8];
 
 /// Geometry scratch buffer: seven floats per brush,
 /// `[minx, miny, minz, maxx, maxy, maxz, flags]` where flags is
-/// 1 = thin cover, 2 = breakable glass.
+/// 1 = thin cover, 2 = breakable glass, 4 = broken, 8 = natural (rock, trunk,
+/// hedge — the renderer dresses it as terrain rather than as architecture).
 static mut GEOMETRY: [f32; 7 * 512] = [0.0; 7 * 512];
 static mut GEOMETRY_COUNT: u32 = 0;
 
@@ -52,7 +53,8 @@ fn publish_geometry() {
             g[o + 5] = b.aabb.max.z;
             g[o + 6] = (b.thin as u32 as f32)
                 + (b.glass as u32 as f32) * 2.0
-                + (b.broken as u32 as f32) * 4.0;
+                + (b.broken as u32 as f32) * 4.0
+                + (b.natural as u32 as f32) * 8.0;
         }
     }
 }

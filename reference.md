@@ -32,12 +32,14 @@ Everything tunable is in **`crates/tick-sim/src/defs.rs`**:
 | What | Symbol |
 |---|---|
 | Tick rate, player size, hitbox split | consts at top (`TICK_HZ`, `PLAYER_HEIGHT`, `HEAD_BOTTOM`) |
-| Movement feel | `WALK_SPEED`…`STEP_HEIGHT`, `SPRINT_FIRE_DELAY` |
+| Movement feel | `WALK_SPEED`…`STEP_HEIGHT`, `SPRINT_SPREAD_MULT` / `SPRINT_SPREAD_LINGER` |
 | Weapon damage / fire rate / falloff | `Weapon::stats` → `WeaponStats` |
 | Character passives and cooldowns | `Character::armor`, `speed_mult`, `reload_mult`, `ability_cooldown` |
 | Mode length and respawn delay | `Mode::duration`, `Mode::respawn_delay` |
 | Weather sight range and audio masking | `Weather::sight_range`, `audio_mult` |
-| Map geometry, spawns, Uplink terminals | `load_map` (one arm per map), helpers `solid` / `thin` / `glass` / `shell` |
+| Map geometry, spawns, Uplink terminals | `load_map` (one arm per map), helpers `solid` / `thin` / `glass` / `nature` / `shell` |
+| Obstacle height rule (climb it or it is a wall) | `MANTLE_HEIGHT` / `WALL_HEIGHT` in `defs.rs`; enforced by `every_obstacle_is_either_climbable_or_a_wall` in `lib.rs` |
+| Head-shot grace radius | `HEAD_GRACE` in `defs.rs`, applied in `World::resolve_hitscan` and `World::step_projectiles` |
 
 Scoring bonuses and the Aim Rating formula are the exception — they live in
 `crates/tick-sim/src/lib.rs` (`World::kill`, `PlayerStats::aim_rating`).
@@ -72,7 +74,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 |---|---|
 | Stats table | `Weapon::stats` (`defs.rs`) |
 | Range falloff curve | `WeaponStats::falloff` |
-| Firing, cooldowns, bursts, reloads | `World::step_weapon` |
+| Firing, cooldowns, bursts, reloads | `World::step_weapon` — sprinting does **not** gate the trigger; it widens the cone (`Player::sprint_spread`) |
 | One shot leaving the barrel | `World::fire_once` (spread cone, ADS/Focus tightening) |
 | Hitscan resolution + lag compensation | `World::resolve_hitscan` |
 | Arc's travelling projectiles + cover penetration | `World::step_projectiles` |
@@ -110,6 +112,9 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Weather gameplay effect | `Weather::sight_range` — feeds bot perception (`bot.rs`) and snapshot culling (`game.rs`) |
 | Weather look (fog, light, rain, cloud deck) | `LOOKS` table + `Renderer.applyLook` / `buildVista` (`render.ts`) |
 | Surface textures (concrete, wood, ground, rock, metal) | `surface` in `render.ts` — drawn to a canvas at runtime, no assets |
+| Sky colour, ground colour, track colour, foliage tint | the `LOOKS` table's `sky` / `ground` / `path` / `foliage` fields (`render.ts`) |
+| Gradient sky dome | `Renderer.buildVista` — vertex-coloured back-faced sphere, drawn before the ocean |
+| Scenery vs architecture | the simulation's `Brush.natural` flag, published as geometry flag bit 8 (`tick-sim-wasm`), read in `Sim.readGeometry` and branched on in `Renderer.buildMap` |
 | Texture tiling by world size | `tileBox` — rewrites a box's UVs so a metre is a metre |
 | Grass, pebbles, worn paths on the floor | `Renderer.buildGroundDetail` |
 | Wall skirting and pilasters | `Renderer.buildWallDetail` |
@@ -181,6 +186,11 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Piece | Where |
 |---|---|
 | Phase machine (lobby → queued → match → results → standby) | `setPhase` in `main.ts` |
+| Lobby backdrop (a match playing behind the menu) | `client/src/attract.ts`, started by `startAttract` in `main.ts`; stepped from `frame` while the phase is lobby or queued |
+| Matchmaking screen (its own translucent layer, not a spinner inside the lobby) | `#searching` in `index.html` / `style.css`, toggled in `setPhase` |
+| Victory / Defeat headline | `#outcome` in `style.css` (`.win` / `.lose` / `.draw`), set in `showResults` (`main.ts`) |
+| Reload loader under the crosshair | `#reloadRing` in `index.html` / `style.css`, driven by `Hud.setReload` from `updateHud` (`main.ts`) |
+| Crouch | keys in `client/src/input.ts` (`ControlLeft` / `ControlRight` / `C`, with modifier state resynced from `e.ctrlKey` on every key event); eased camera dip via `crouchBlend` in `main.ts`; hitbox in `Player::head_box` / `body_box` |
 | Spawn card | `showSpawnCard` in `main.ts`, markup in `client/index.html` |
 | Waiting feedback (queue spinner and clock, respawn countdown) | `#queueWait` / `#respawnWait` in `index.html`, driven in `frame` (`main.ts`) |
 | Killer card on the death screen | `showKillerCard` (`main.ts`) + `Renderer.portraitFrame` — its own small WebGL context, because the main canvas is frozen |
