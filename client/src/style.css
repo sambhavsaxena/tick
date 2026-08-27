@@ -416,6 +416,174 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 }
 #queueWait .spinner { margin: 0; width: 18px; height: 18px; }
 
+/* Two quiet links under Play. They are buttons for the keyboard's sake, and
+   styled as text so they never compete with the one button that matters. */
+.lobbyLinks {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1.1rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: #4d5862;
+}
+.linkButton {
+  background: none;
+  border: 0;
+  padding: 0.2rem 0.1rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+.linkButton:hover { color: var(--ink); border-bottom-color: var(--enemy); filter: none; }
+
+/* ------------------------------------------------- about / how to play */
+
+/* A sheet: a translucent, scrollable panel over the lobby. The backdrop match
+   stays visible behind it, because watching the game is half of reading about
+   the game. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  /* The panel still scrolls; it just does not draw a bar down the side of a
+     translucent sheet with a live match behind it. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: clamp(1.5rem, 6vh, 5rem) 1.25rem;
+  background: rgba(6, 9, 13, 0.78);
+  backdrop-filter: blur(9px);
+  animation: fadeIn 0.16s ease-out;
+}
+.sheet::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.sheetInner {
+  position: relative;
+  width: min(44rem, 100%);
+  border: 1px solid var(--line);
+  background: rgba(10, 14, 19, 0.86);
+  padding: 2.4rem clamp(1.4rem, 4vw, 2.8rem) 2.8rem;
+}
+.sheetClose {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--dim);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.sheetClose:hover { color: var(--ink); filter: none; }
+.sheetInner h2 {
+  font-family: var(--mono);
+  font-size: clamp(1.6rem, 5vw, 2.4rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 1rem;
+}
+.sheetInner h3 {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--enemy);
+  margin: 0 0 0.6rem;
+}
+.sheetInner section { margin-top: 2rem; }
+.sheetInner p {
+  margin: 0;
+  line-height: 1.65;
+  font-size: 0.88rem;
+  color: #c2ccd6;
+}
+.sheetLead {
+  color: var(--ink) !important;
+  font-size: 1rem !important;
+  line-height: 1.6 !important;
+  border-left: 2px solid var(--enemy);
+  padding-left: 0.9rem;
+}
+.sheetList {
+  margin: 0;
+  padding-left: 1.2rem;
+  line-height: 1.6;
+  font-size: 0.88rem;
+  color: #c2ccd6;
+}
+.sheetList li { margin-bottom: 0.6rem; }
+.sheetList b, .sheetTable b { color: var(--ink); font-weight: 600; }
+.sheetTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  color: #c2ccd6;
+}
+.sheetTable td {
+  padding: 0.42rem 0.7rem 0.42rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+.sheetTable td:first-child {
+  font-family: var(--mono);
+  white-space: nowrap;
+  width: 9.5rem;
+  color: var(--dim);
+}
+.sheetRepo {
+  font-family: var(--mono);
+  font-size: 0.86rem !important;
+  margin-top: 0.9rem !important;
+}
+.sheetRepo a {
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid var(--enemy);
+}
+.sheetRepo a:hover { color: var(--enemy); }
+.sheetMono { font-family: var(--mono); color: var(--ink); }
+.sheetLegal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+  margin-top: 1.2rem !important;
+  font-family: var(--mono);
+  font-size: 0.64rem !important;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.sheetLegal a { color: var(--dim); text-decoration: none; }
+.sheetLegal a:hover { color: var(--ink); }
+
+/* Privacy / Terms / Contact, kept small and out of the way at the foot of
+   the lobby: present, never competing with Play. */
+.lobbyLegal {
+  display: flex;
+  gap: 1.1rem;
+  justify-content: center;
+  margin-top: 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.lobbyLegal a { color: #4d5862; text-decoration: none; }
+.lobbyLegal a:hover { color: var(--dim); }
+
+.allyInk { color: var(--ally); }
+.enemyInk { color: var(--enemy); }
+
 /* One line pinned to the bottom of the lobby. It scrolls rather than wraps,
    so a narrow window shortens the strip instead of stealing a second row. */
 .controls {
@@ -572,7 +740,7 @@ button:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) {
   .spinner, #eventBanner.telegraph { animation: none; }
   .bonusRow { animation-duration: 0.01s; }
-  #outcome, #searching { animation: none; }
+  #outcome, #searching, .sheet { animation: none; }
 }
 
 /* --------------------------------------------------------- damage numbers */

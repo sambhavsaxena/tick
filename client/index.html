@@ -67,12 +67,22 @@
       <div class="lobbyInner">
         <h1>TICK</h1>
         <p class="tagline">
-          Four minutes. The server picks your character, your gun, the map and the weather.
-          Everything else is aim.
+          Four minutes.
+          Aim is everything.
         </p>
         <p class="nameRow" id="callsignNote">Connecting…</p>
         <button id="playButton">Play</button>
+        <nav class="lobbyLinks">
+          <button class="linkButton" id="howButton">How to play</button>
+          <span aria-hidden="true">·</span>
+          <button class="linkButton" id="aboutButton">About</button>
+        </nav>
         <p class="footnote">Body kill 100. Clean long-range headshot 325. That ratio is the game.</p>
+        <nav class="lobbyLegal">
+          <a href="/privacy.html" target="_blank" rel="noopener">Privacy</a>
+          <a href="/terms.html" target="_blank" rel="noopener">Terms</a>
+          <a href="/contact.html" target="_blank" rel="noopener">Contact</a>
+        </nav>
       </div>
       <ul class="controls">
         <li><b>WASD</b> move</li>
@@ -87,6 +97,138 @@
         <li><b>V</b> melee</li>
         <li><b>Esc Esc</b> standby</li>
       </ul>
+    </div>
+
+    <!-- How to play. A panel over the lobby rather than a page of its own:
+         the backdrop match behind it is half the explanation. -->
+    <div id="howto" class="sheet hidden">
+      <div class="sheetInner">
+        <button class="sheetClose" data-close="howto" aria-label="Close">×</button>
+        <h2>How to play</h2>
+
+        <p class="sheetLead">
+          Four minutes, four against four. Aiming well is worth more than
+          shooting a lot: a clean long-range headshot scores about three times
+          what a plain body kill does.
+        </p>
+
+        <section>
+          <h3>A match, start to finish</h3>
+          <ol class="sheetList">
+            <li>Hit <b>Play</b>. Bots fill any empty seats after a few seconds, so you never wait long.</li>
+            <li>The server drafts everything — character, weapon, map, weather, mode — and shows you the card for two seconds. Both teams get the same quality of kit; nobody picks a better loadout.</li>
+            <li>Fight. Enemies are <span class="enemyInk">orange</span>, teammates are <span class="allyInk">teal</span>. That orange appears nowhere else in the world, so a silhouette is always a player.</li>
+            <li>When you die you watch through your killer's eyes, and you may swap your respawn weapon with <b>1</b>–<b>4</b> while you wait.</li>
+            <li>The clock ends the match. You get a scoreboard and an <b>Aim Rating</b> out of 100, measured against your own last twenty matches.</li>
+          </ol>
+        </section>
+
+        <section>
+          <h3>Controls</h3>
+          <table class="sheetTable">
+            <tr><td><b>W A S D</b></td><td>Move</td></tr>
+            <tr><td><b>Mouse</b></td><td>Look · left click fires · right click aims</td></tr>
+            <tr><td><b>Shift</b></td><td>Sprint. You can still shoot at a run — the shots just scatter</td></tr>
+            <tr><td><b>Space</b></td><td>Jump. Anything you can climb clears in one</td></tr>
+            <tr><td><b>Ctrl</b> or <b>C</b></td><td>Crouch: shorter, slower, harder to hit</td></tr>
+            <tr><td><b>R</b></td><td>Reload — the ring under the crosshair is your reload</td></tr>
+            <tr><td><b>Q</b> or <b>F</b></td><td>Your character's power</td></tr>
+            <tr><td><b>Aim + Q</b></td><td>Focus: spend a full Precision Charge for two steady seconds</td></tr>
+            <tr><td><b>V</b></td><td>Melee. From behind, it finishes</td></tr>
+            <tr><td><b>1</b>–<b>4</b></td><td>While dead: pick the weapon you respawn with</td></tr>
+            <tr><td><b>Esc Esc</b></td><td>Step away — a bot plays your character until you return</td></tr>
+          </table>
+        </section>
+
+        <section>
+          <h3>Reading the map</h3>
+          <p>
+            Level geometry follows one rule: if you can get on top of it, it is
+            low enough to clear with a single jump; everything else is a wall.
+            There is no third kind of obstacle to guess about. Rocks, trees and
+            hedges are the exception — they are terrain, and they read as
+            terrain.
+          </p>
+        </section>
+
+        <section>
+          <h3>Scoring</h3>
+          <p>
+            A body kill is 100. Headshots, long shots, clean engagements,
+            duels, rescues and first blood all stack bonuses on top. Precision
+            is the economy: head hits build Precision Charge, and Focus spends
+            it. Everything on the results screen is downstream of how well you
+            aimed.
+          </p>
+        </section>
+      </div>
+    </div>
+
+    <!-- About -->
+    <div id="about" class="sheet hidden">
+      <div class="sheetInner">
+        <button class="sheetClose" data-close="about" aria-label="Close">×</button>
+        <h2>About</h2>
+
+        <p class="sheetLead">
+          TICK is a vibe-coded, open-source project created by
+          <b>Sambhav Saxena</b>.
+        </p>
+
+        <section>
+          <p>
+            It is a four-minute, 4v4 first-person shooter that runs entirely in
+            a browser tab. There is no launcher, no account and no download
+            beyond the page itself — every texture, sound and model in the game
+            is generated at runtime rather than shipped as an asset.
+          </p>
+        </section>
+
+        <section>
+          <h3>How it is built</h3>
+          <p>
+            One simulation, written in Rust, is the only place the rules exist.
+            The server runs it at 64&nbsp;Hz as the authority, and your browser
+            runs the exact same compiled code through WebAssembly to predict
+            your own movement — so prediction cannot drift from the server,
+            because it is not a second implementation. Rendering is WebGL
+            through three.js; the transport is a plain WebSocket with lag
+            compensation and entity interpolation on top.
+          </p>
+        </section>
+
+        <section>
+          <h3>Open source</h3>
+          <p>
+            The whole thing is open: the simulation crate, the server, the
+            client, and the design document the whole game was built against.
+            Read it, fork it, take the parts you want.
+          </p>
+          <p class="sheetRepo">
+            <a href="https://github.com/sambhavsaxena/tick" target="_blank" rel="noopener">
+              github.com/sambhavsaxena/tick
+            </a>
+          </p>
+          <p>
+            Contributions are welcome — open an issue for a bug, or a pull
+            request if you have already fixed it.
+          </p>
+        </section>
+
+        <section>
+          <h3>Contact</h3>
+          <p>
+            <span class="sheetMono">dev [at] playtick.lol</span> — swap
+            <span class="sheetMono">[at]</span> for
+            <span class="sheetMono">@</span>.
+          </p>
+          <p class="sheetLegal">
+            <a href="/privacy.html" target="_blank" rel="noopener">Privacy</a>
+            <a href="/terms.html" target="_blank" rel="noopener">Terms</a>
+            <a href="/contact.html" target="_blank" rel="noopener">Contact</a>
+          </p>
+        </section>
+      </div>
     </div>
 
     <!-- Matchmaking: a translucent screen over the lobby, not a spinner
@@ -122,7 +264,7 @@
         </div>
         <div id="bestKill"></div>
         <table id="scoreTable"></table>
-        <button id="againButton">Again <span id="againTimer"></span></button>
+        <button id="againButton">Play again</button>
       </div>
     </div>
 

@@ -33,6 +33,7 @@ Everything tunable is in **`crates/tick-sim/src/defs.rs`**:
 |---|---|
 | Tick rate, player size, hitbox split | consts at top (`TICK_HZ`, `PLAYER_HEIGHT`, `HEAD_BOTTOM`) |
 | Movement feel | `WALK_SPEED`…`STEP_HEIGHT`, `SPRINT_SPREAD_MULT` / `SPRINT_SPREAD_LINGER` |
+| Wall sliding (how much geometry may bend your movement) | `SLIDE_LIMIT` in `defs.rs`, applied in `move_axis` (`movement.rs`); pinned by `a_wall_in_front_stops_you_instead_of_steering_you` |
 | Weapon damage / fire rate / falloff | `Weapon::stats` → `WeaponStats` |
 | Character passives and cooldowns | `Character::armor`, `speed_mult`, `reload_mult`, `ability_cooldown` |
 | Mode length and respawn delay | `Mode::duration`, `Mode::respawn_delay` |
@@ -145,7 +146,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Precision Charge accrual | `World::fire_once` (on head hits) |
 | Focus spend | `World::step_weapon` (ADS + ability) |
 | Aim Rating | `PlayerStats::aim_rating` |
-| Results screen and rolling AR history | `showResults` in `client/src/main.ts` (`localStorage` key `tick.ar`) |
+| Results screen and rolling AR history | `showResults` in `client/src/main.ts` (`localStorage` key `tick.ar`) — it never requeues on its own; `#againButton` is the only way back into the queue |
 
 ---
 
@@ -188,6 +189,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Phase machine (lobby → queued → match → results → standby) | `setPhase` in `main.ts` |
 | Lobby backdrop (a match playing behind the menu) | `client/src/attract.ts`, started by `startAttract` in `main.ts`; stepped from `frame` while the phase is lobby or queued |
 | Matchmaking screen (its own translucent layer, not a spinner inside the lobby) | `#searching` in `index.html` / `style.css`, toggled in `setPhase` |
+| About and How to play | `#about` / `#howto` sheets in `index.html`, `.sheet` rules in `style.css`, opened by `openSheet` in `main.ts` (Escape, backdrop click and Play all close them). The sheets scroll with the bar suppressed |
+| Privacy / Terms / Contact | standalone pages in `client/public/` (`privacy.html`, `terms.html`, `contact.html`, sharing `legal.css`) — copied verbatim into `dist` by Vite and served by the `ServeDir` fallback in `main.rs`; linked from `.lobbyLegal` and the About sheet, always `target="_blank"` |
 | Victory / Defeat headline | `#outcome` in `style.css` (`.win` / `.lose` / `.draw`), set in `showResults` (`main.ts`) |
 | Reload loader under the crosshair | `#reloadRing` in `index.html` / `style.css`, driven by `Hud.setReload` from `updateHud` (`main.ts`) |
 | Crouch | keys in `client/src/input.ts` (`ControlLeft` / `ControlRight` / `C`, with modifier state resynced from `e.ctrlKey` on every key event); eased camera dip via `crouchBlend` in `main.ts`; hitbox in `Player::head_box` / `body_box` |

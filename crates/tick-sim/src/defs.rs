@@ -38,6 +38,16 @@ pub const STEP_HEIGHT: f32 = 0.45;
 /// so the cost tapers off instead of vanishing the instant Shift is released.
 pub const SPRINT_SPREAD_LINGER: f32 = 0.12;
 
+/// How far a wall is allowed to bend your movement before the move is refused
+/// outright, as the cosine of the angle between the direction you asked for
+/// and the direction the geometry would give you. Above this you are brushing
+/// past a wall that runs alongside you and should keep going; below it the
+/// wall is in front of you, and the classic per-axis slide would be turning a
+/// press of W into sideways travel nobody asked for.
+///
+/// 0.87 is a shade under 30 degrees.
+pub const SLIDE_LIMIT: f32 = 0.87;
+
 /// Spread multiplier applied while sprinting. Running and gunning is allowed
 /// on every weapon; it just costs accuracy rather than costing the shot.
 pub const SPRINT_SPREAD_MULT: f32 = 1.6;

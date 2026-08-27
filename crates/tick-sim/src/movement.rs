@@ -63,9 +63,31 @@ fn blocked(pos: Vec3, crouching: bool, brushes: &[Brush]) -> bool {
     brushes.iter().any(|s| !s.broken && s.aabb.overlaps(&b))
 }
 
-/// Move one axis at a time and stop at the first blocking brush. Splitting the
-/// axes is what produces sliding along walls instead of sticking to them.
-fn move_axis(st: &mut MoveState, delta: Vec3, brushes: &[Brush]) -> (bool, bool) {
+/// Move one axis at a time and stop at the first blocking brush, then decide
+/// whether the result is a move the player actually asked for.
+///
+/// Splitting the axes is what lets a player slide along a wall instead of
+/// sticking to it, and against axis-aligned geometry it is the right
+/// mechanism — but on its own it is too generous. Walk forward into a wall at
+/// an angle and one axis survives, so holding W alone carries you sideways
+/// along a surface you never asked to travel along, faster the more sharply
+/// you face it.
+///
+/// So the slide is kept, and then judged. A move whose direction ends up far
+/// from the direction that was asked for is refused outright and the player
+/// stops dead. Two things are allowed through:
+///
+///   * a small deflection — you are brushing past a wall that runs alongside
+///     you, and you are still going where you meant to. Without this, running
+///     down a corridor would require aiming perfectly parallel to it;
+///   * any deflection at all while a strafe key is down, because moving
+///     sideways is exactly what that key means.
+fn move_axis(
+    st: &mut MoveState,
+    delta: Vec3,
+    input: &Input,
+    brushes: &[Brush],
+) -> (bool, bool) {
     let mut hit_wall = false;
     let mut hit_floor = false;
 
@@ -79,6 +101,8 @@ fn move_axis(st: &mut MoveState, delta: Vec3, brushes: &[Brush]) -> (bool, bool)
         }
     };
 
+    // Horizontal first, as one phase, so the whole of it can be taken back.
+    let before = st.pos;
     if delta.x != 0.0 && !try_axis(st, v3(delta.x, 0.0, 0.0)) {
         // Try to step over a low obstacle before giving up on the axis.
         let lifted = st.pos.add(v3(delta.x, STEP_HEIGHT, 0.0));
@@ -98,6 +122,24 @@ fn move_axis(st: &mut MoveState, delta: Vec3, brushes: &[Brush]) -> (bool, bool)
             hit_wall = true;
         }
     }
+
+    if hit_wall {
+        let moved = v3(st.pos.x - before.x, 0.0, st.pos.z - before.z);
+        let wanted = v3(delta.x, 0.0, delta.z);
+        let strafing = input.held(buttons::LEFT) || input.held(buttons::RIGHT);
+        if !strafing && moved.len_xz() > 1e-6 && wanted.len_xz() > 1e-6 {
+            if wanted.normalized().dot(moved.normalized()) < SLIDE_LIMIT {
+                // The wall was in front, not alongside. Take the whole
+                // horizontal step back — including any step-up it climbed —
+                // and drop the speed, so leaning on the key against a wall
+                // cannot store up momentum to be released along it later.
+                st.pos = before;
+                st.vel.x = 0.0;
+                st.vel.z = 0.0;
+            }
+        }
+    }
+
     if delta.y != 0.0 && !try_axis(st, v3(0.0, delta.y, 0.0)) {
         if delta.y < 0.0 {
             hit_floor = true;
@@ -205,7 +247,7 @@ pub fn step_movement(
     }
 
     let delta = st.vel.scale(DT);
-    let (_, hit_floor) = move_axis(st, delta, brushes);
+    let (_, hit_floor) = move_axis(st, delta, input, brushes);
 
     // Ground check: probe a hair below the feet.
     let probe = st.pos.add(v3(0.0, -0.03, 0.0));

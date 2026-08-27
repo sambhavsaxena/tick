@@ -88,7 +88,6 @@ let fps = 60;
 let smoothing: [number, number, number] = [0, 0, 0];
 let standbySince = 0;
 let botTookOver = false;
-let againCountdown = 0;
 let adsAmount = 0;
 let isDead = false;
 /** When the lobby entered the queue, for the waiting clock. */
@@ -188,11 +187,45 @@ function stopAttract() {
 }
 
 playButton.addEventListener("click", () => {
+  openSheet(null);
   audio.start();
   net.send({ t: "play" });
   queuedSince = performance.now();
   setPhase("queued");
   queueState.textContent = "Finding a match…";
+});
+
+// About and How to play: two panels over the lobby. They are opened and
+// closed here rather than by CSS alone so Escape closes them, and so opening
+// one never leaves the other on screen.
+const sheets = ["about", "howto"] as const;
+
+function openSheet(id: (typeof sheets)[number] | null) {
+  for (const s of sheets) {
+    document.getElementById(s)?.classList.toggle("hidden", s !== id);
+  }
+}
+
+(document.getElementById("aboutButton") as HTMLButtonElement).addEventListener(
+  "click",
+  () => openSheet("about"),
+);
+(document.getElementById("howButton") as HTMLButtonElement).addEventListener(
+  "click",
+  () => openSheet("howto"),
+);
+for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>(".sheetClose"))) {
+  btn.addEventListener("click", () => openSheet(null));
+}
+// Clicking the darkened area outside the panel closes it, the way every other
+// modal on the web does.
+for (const id of sheets) {
+  document.getElementById(id)?.addEventListener("mousedown", (e) => {
+    if (e.target === e.currentTarget) openSheet(null);
+  });
+}
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") openSheet(null);
 });
 
 againButton.addEventListener("click", () => {
@@ -333,6 +366,8 @@ function setPhase(next: Phase) {
     if (!attractRunning) startAttract();
   } else {
     stopAttract();
+    // Nothing from the lobby survives into a match.
+    openSheet(null);
   }
   if (next === "match") {
     hud.show();
@@ -815,12 +850,6 @@ function frame(now: number) {
   );
   hud.tick(dt);
 
-  if (againCountdown > 0) {
-    againCountdown -= dt;
-    const el = document.getElementById("againTimer");
-    if (el) el.textContent = `· ${Math.max(0, Math.ceil(againCountdown))}`;
-    if (againCountdown <= 0) againButton.click();
-  }
 }
 
 function stepLocal() {
@@ -992,7 +1021,9 @@ function showResults(msg: any) {
     table.appendChild(tr);
   }
 
-  againCountdown = 8;
+  // No auto-requeue: the results screen stays up until the player asks for
+  // another match. Reading your own scoreline is the point of the screen, and
+  // a countdown that queues you anyway takes that away.
 }
 
 // Development aid: inspect and drive the game without a pointer lock, so the

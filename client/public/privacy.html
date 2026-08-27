@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy · TICK</title>
+    <link rel="stylesheet" href="/legal.css" />
+  </head>
+  <body>
+    <main>
+      <a class="home" href="/">← Back to TICK</a>
+      <h1>Privacy</h1>
+      <p class="updated">Last updated 27 August 2026</p>
+
+      <p class="lead">
+        TICK has no accounts, no sign-up, no cookies and no trackers. It does
+        not know who you are, and it is not built to find out.
+      </p>
+
+      <section>
+        <h2>What is stored on your device</h2>
+        <p>
+          One thing: a browser <code>localStorage</code> entry called
+          <code>tick.ar</code>, holding your last twenty Aim Ratings so the
+          results screen can show you a trend. It is a list of numbers. It
+          never leaves your browser and is never sent anywhere. Clearing site
+          data for this domain deletes it.
+        </p>
+        <p>
+          No cookies are set. No analytics, advertising, fingerprinting or
+          third-party scripts are loaded — the page ships its own code and
+          nothing else.
+        </p>
+      </section>
+
+      <section>
+        <h2>What the server sees while you play</h2>
+        <p>
+          A match runs over a WebSocket. For the life of that connection the
+          server holds, in memory only:
+        </p>
+        <ul>
+          <li>your network connection, including the IP address that any internet connection necessarily carries;</li>
+          <li>a callsign the server generates for you — two dictionary words and four digits. You do not supply it, and it is not tied to you across sessions;</li>
+          <li>the inputs you send during the match, and the score derived from them.</li>
+        </ul>
+        <p>
+          The application writes nothing to disk. There is no database, no
+          profile and no match history: when the connection closes, everything
+          above is dropped. Whatever infrastructure the server happens to run
+          on may keep its own connection logs, as any web host does; that sits
+          below this application and outside its control.
+        </p>
+      </section>
+
+      <section>
+        <h2>Other players</h2>
+        <p>
+          Other people in your match see your generated callsign and your
+          in-game score. That is the whole of it — there is nothing else about
+          you for them to see.
+        </p>
+      </section>
+
+      <section>
+        <h2>Children</h2>
+        <p>
+          TICK collects no personal information from anyone, of any age, and
+          nothing in it is directed at children as a marketing audience.
+        </p>
+      </section>
+
+      <section>
+        <h2>Changes</h2>
+        <p>
+          If this policy changes, the date at the top changes with it. TICK is
+          open source, so the change is visible in the repository's history
+          too.
+        </p>
+      </section>
+
+      <section>
+        <h2>Contact</h2>
+        <p>
+          Questions about any of this: <span class="mono">dev [at] playtick.lol</span>.
+        </p>
+      </section>
+
+      <footer>
+        <a href="/">Play</a>
+        <a href="/terms.html">Terms</a>
+        <a href="/contact.html">Contact</a>
+        <a href="https://github.com/sambhavsaxena/tick" rel="noopener">Source</a>
+      </footer>
+    </main>
+  </body>
+</html>

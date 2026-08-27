@@ -2770,4 +2770,92 @@ mod tests {
             "a sprinting player who pulls the trigger fires"
         );
     }
+
+    /// Walking forward into a wall must not turn into walking sideways along
+    /// it. Three cases, one rule: the geometry may only bend your movement a
+    /// little, unless you are the one asking to move sideways.
+    #[test]
+    fn a_wall_in_front_stops_you_instead_of_steering_you() {
+        // A wall running along X, four metres ahead in +Z.
+        let wall = vec![
+            Brush {
+                aabb: Aabb::from_center(v3(0.0, 2.0, 4.0), v3(30.0, 2.0, 0.5)),
+                thin: false,
+                glass: false,
+                broken: false,
+                natural: false,
+            },
+            Brush {
+                aabb: Aabb::from_center(v3(0.0, -1.0, 0.0), v3(40.0, 1.0, 40.0)),
+                thin: false,
+                glass: false,
+                broken: false,
+                natural: false,
+            },
+        ];
+
+        // Start already touching the wall, so what is measured is the drift
+        // the wall causes and not the diagonal walk that got us there.
+        let run = |buttons: u16, yaw: f32| {
+            let mut st = MoveState {
+                pos: v3(0.0, 0.05, 3.05),
+                ..Default::default()
+            };
+            for seq in 0..64 {
+                let input = Input { seq, yaw, pitch: 0.0, buttons };
+                movement::step_movement(&mut st, &input, &wall, 1.0, 1.0, true, Vec3::ZERO);
+            }
+            st.pos
+        };
+
+        let head_on = run(buttons::FWD, 0.7853982);
+        assert!(
+            abs(head_on.x) < 0.35,
+            "W into an angled wall must not slide along it, drifted {:.2} m in x",
+            head_on.x
+        );
+
+        // Square on to the same wall with a strafe key down: sideways is
+        // exactly what that key asks for, so the slide is allowed.
+        let strafing = run(buttons::FWD | buttons::RIGHT, 0.0);
+        assert!(
+            abs(strafing.x) > 1.5,
+            "holding a strafe key against the wall still strafes, only moved {:.2} m",
+            strafing.x
+        );
+
+        // And a wall you are running alongside, not into: a corridor wall in
+        // +X with the player heading down it a few degrees off parallel. That
+        // graze has to keep moving, or a corridor needs perfect aim to run.
+        let corridor = vec![
+            Brush {
+                aabb: Aabb::from_center(v3(1.0, 2.0, 0.0), v3(0.5, 2.0, 40.0)),
+                thin: false,
+                glass: false,
+                broken: false,
+                natural: false,
+            },
+            Brush {
+                aabb: Aabb::from_center(v3(0.0, -1.0, 0.0), v3(40.0, 1.0, 40.0)),
+                thin: false,
+                glass: false,
+                broken: false,
+                natural: false,
+            },
+        ];
+        let mut st = MoveState {
+            pos: v3(0.0, 0.05, -10.0),
+            ..Default::default()
+        };
+        for seq in 0..64 {
+            // Ten degrees off parallel, leaning into the wall.
+            let input = Input { seq, yaw: 0.1745, pitch: 0.0, buttons: buttons::FWD };
+            movement::step_movement(&mut st, &input, &corridor, 1.0, 1.0, true, Vec3::ZERO);
+        }
+        assert!(
+            st.pos.z > -7.0,
+            "grazing a wall alongside you must not stop you dead, only reached z {:.2}",
+            st.pos.z
+        );
+    }
 }

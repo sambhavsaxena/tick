@@ -1,0 +1,114 @@
+/* Shared look for TICK's standalone pages (privacy, terms, contact).
+   These live in `public/`, so they are served verbatim and never go through
+   the client bundle — one small stylesheet rather than three copies of it. */
+
+:root {
+  --ink: #e8edf3;
+  --dim: #93a0ac;
+  --body: #c2ccd6;
+  --accent: #ff5a2e;
+  --line: rgba(232, 237, 243, 0.14);
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono", Menlo, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: clamp(2.5rem, 8vh, 6rem) 1.25rem 6rem;
+  background: radial-gradient(ellipse at 50% 0%, #131a22 0%, #080b0f 70%) fixed;
+  color: var(--body);
+  font-family: var(--sans);
+  line-height: 1.65;
+}
+
+main { width: min(42rem, 100%); margin: 0 auto; }
+
+a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--accent); }
+a:hover { color: var(--accent); }
+
+.home {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border: 0;
+  margin-bottom: 2.5rem;
+}
+.home:hover { color: var(--ink); }
+
+h1 {
+  font-family: var(--mono);
+  font-size: clamp(1.8rem, 6vw, 2.8rem);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0 0 0.4rem;
+}
+
+.updated {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #5f6b76;
+  margin: 0 0 2.5rem;
+}
+
+.lead {
+  color: var(--ink);
+  font-size: 1rem;
+  border-left: 2px solid var(--accent);
+  padding-left: 0.9rem;
+  margin: 0 0 2.5rem;
+}
+
+section { margin-bottom: 2.4rem; }
+
+h2 {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.7rem;
+}
+
+p { margin: 0 0 0.9rem; font-size: 0.92rem; }
+ul { margin: 0 0 0.9rem; padding-left: 1.2rem; font-size: 0.92rem; }
+li { margin-bottom: 0.5rem; }
+b, strong { color: var(--ink); font-weight: 600; }
+
+code, .mono {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  color: var(--ink);
+}
+
+/* The contact address, big enough to read off a screen and copy by hand. */
+.address {
+  font-family: var(--mono);
+  font-size: clamp(1.1rem, 4vw, 1.6rem);
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  word-break: break-word;
+  margin: 0 0 0.5rem;
+}
+.addressNote { font-size: 0.8rem; color: var(--dim); margin: 0; }
+
+footer {
+  border-top: 1px solid var(--line);
+  margin-top: 3.5rem;
+  padding-top: 1.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+footer a { border: 0; color: var(--dim); }
+footer a:hover { color: var(--ink); }
