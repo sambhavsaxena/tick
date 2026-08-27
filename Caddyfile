@@ -1,0 +1,3 @@
+playtick.lol {
+    reverse_proxy tick:8080
+}
