@@ -62,6 +62,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | **Last Light** — rounds, fog wall | `World::step_last_light` |
 | Ghost pings | `World::ghost_ping`, routed via `ToMatch::GhostPing` (`game.rs`), sent by client on click-while-dead (`main.ts`) |
 | Killcam (watch your killer, then *their* killer) | `Player::killed_by` and `World::spectate_target` (`lib.rs`); visibility resolved from the spectated eye in `compute_visibility` (`game.rs`); camera in `viewEye` (`main.ts`), honoured by both the match and standby render paths in `frame` |
+| Killcam camera smoothness | `spectatedView` + `interpWindow` (`main.ts`) — the spectated eye is sampled on `renderTime`, the same delayed timeline `renderPlayers` puts every body on. A camera fed from the newest snapshot steps 31 ms at a time through a world that is interpolating, and every step reads as a shake |
+| The cut between two spectated players | `specOffset` / `specFrom` / `specCrouch` in `viewEye` — the jump is carried as a decaying visual offset, and dropped outright past 6 m so a cut across the map is a cut, not a flight through walls |
 | Death and respawn state | `onSnapshot` in `main.ts` — the snapshot's `alive` flag drives `enterDeath` / `leaveDeath`, in Standby as well as in the match, because a player who steps away is still a body on the server |
 | Diagnosing the killcam | `window.tick.state()` — `spectating` is the slot the server sent, `spectated` is the one the client resolved, `camera` is where the view actually is |
 | Twin Core / Pinhead | `World::start_event` and `World::apply_damage`; drawn only in their own mode via `StaticEvent::mode_lock` |
@@ -159,7 +161,8 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Lag compensation rewind | `World::record_history`, `World::rewound`, `MAX_REWIND_TICKS` |
 | Client prediction step | `stepLocal` in `client/src/main.ts` → `Sim.step` → wasm `step_movement` |
 | Reconciliation and error smoothing | `reconcile` in `main.ts` |
-| Entity interpolation | `renderPlayers` in `main.ts`, width from `interpDelayMs` |
+| Entity interpolation | `renderPlayers` in `main.ts`, sampling `interpWindow` at `renderTime` |
+| Interpolation width | `interpDelayMs` (`main.ts`), eased toward its RTT-driven target by `stepInterpWidth` so `renderTime` never jumps when a ping does |
 | RTT measurement | `Net.ping` (`client/src/net.ts`), served by the `"ping"` arm in `main.rs` |
 | Wire layouts | `crates/tick-server/src/proto.rs` ↔ `client/src/proto.ts` — **change both** |
 
@@ -205,6 +208,7 @@ All four share one `World`; mode-specific behaviour branches off `cfg_mode`.
 | Pointer lock, key mapping, sensitivity | `client/src/input.ts` (`KEY_BUTTONS`) |
 | HUD elements | `client/src/hud.ts` + `client/index.html` + `client/src/style.css` |
 | Kill feed, bonus popups, warnings | `Hud.killRow`, `Hud.bonusPopup`, `Hud.warn` |
+| Taking a hit (red pulse at the screen edges) | `#damageVignette` in `index.html` / `style.css`; `Hud.damage` raises the level, `Hud.tick` beats and decays it, `Hud.clearDamage` drops it on death and respawn. Raised from the `"dmg"` arm of `handleEvent` (`main.ts`) when the victim is us and the attacker is on the other team |
 | Positional audio | `client/src/audio.ts` (HRTF panner, synthesised — no samples) |
 | Debug hook (`window.tick`) | bottom of `main.ts` — `state()`, `players()`, `aimAt()`, `press()`, `release()` |
 

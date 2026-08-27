@@ -11,7 +11,7 @@ import { Audio } from "./audio";
 import { Hud } from "./hud";
 import { InputState } from "./input";
 import { Net } from "./net";
-import { BTN, type InputCmd, type Snapshot } from "./proto";
+import { BTN, type InputCmd, type SnapPlayer, type Snapshot } from "./proto";
 import { Renderer, type RenderPlayer } from "./render";
 import { Sim } from "./sim";
 
@@ -104,8 +104,24 @@ let lastKiller: { slot: number; weapon: number; headshot: boolean } | null = nul
  * dead — and the camera stays where we fell.
  */
 let spectating = 255;
-/** Smoothed killcam eye, so the cut to the killer's view is not a jolt. */
-let specEye: [number, number, number] | null = null;
+/**
+ * The killcam eye we handed the renderer last frame, so a switch of who we
+ * are watching can be measured from where the view actually was.
+ */
+let lastViewEye: [number, number, number] | null = null;
+/**
+ * Decaying offset on the killcam eye, so cutting to a new pair of eyes is a
+ * fast glide rather than a teleport. Visual only, the same trick
+ * reconciliation uses on our own camera.
+ */
+let specOffset: [number, number, number] = [0, 0, 0];
+/** The slot `specOffset` was measured against, so a switch is noticed once. */
+let specFrom = -1;
+/**
+ * Blended crouch of the player we are watching. Their hitbox flips instantly
+ * and so does the snapshot flag; the eye eases, for the same reason ours does.
+ */
+let specCrouch = 0;
 /** Respawn delay per mode, mirroring Mode::respawn_delay in the sim. */
 const RESPAWN_DELAY = [3, 2, 4, Infinity];
 /** Where our last landed shot hit, for anchoring damage numbers. */
@@ -117,6 +133,18 @@ let lastImpact: { p: number[]; at: number } | null = null;
  * it. Purely visual: the server resolves shots from its own eye.
  */
 let crouchBlend = 0;
+/**
+ * The instant the world is being drawn at: `interpDelayMs()` behind now, and
+ * the timeline `renderPlayers` places every other body on. Fixed once per
+ * frame so the camera and the bodies cannot disagree by a millisecond.
+ */
+let renderTime = 0;
+/**
+ * The interpolation width, eased. `interpDelayMs` follows RTT, and RTT moves
+ * every ping — letting the width jump means `renderTime` jumps with it, which
+ * is a world that stutters for reasons that have nothing to do with movement.
+ */
+let interpWidth = 80;
 /** The reload this loader is showing, so its ring has something to fill. */
 let reloadTotal = 0;
 /** True while the lobby's backdrop match is running. */
@@ -301,7 +329,11 @@ function enterDeath() {
   // The world keeps rendering while dead: the backdrop is the killcam, not a
   // frozen frame. It only freezes if there is nobody left to watch.
   renderer.frozen = false;
-  specEye = null;
+  // Keep the eye we died with: the cut into the killer's view is measured
+  // from it, so the killcam glides out of our own last frame.
+  clearSpectatorCam(true);
+  // The hit warning was about our own body; the killcam is not ours.
+  hud.clearDamage();
   input.releaseLock();
   showKillerCard();
   const hint = document.getElementById("deathHint") as HTMLElement;
@@ -345,7 +377,8 @@ function leaveDeath() {
   isDead = false;
   lastKiller = null;
   spectating = 255;
-  specEye = null;
+  hud.clearDamage();
+  clearSpectatorCam();
   renderer.frozen = false;
   killerCard.classList.add("hidden");
   deathOverlay.classList.add("hidden");
@@ -424,7 +457,8 @@ function onJson(msg: any) {
       myMode = msg.mode;
       ghostPingSpent = false;
       spectating = 255;
-      specEye = null;
+      clearSpectatorCam();
+      hud.clearDamage();
       lastKiller = null;
       snapshots = [];
       latest = null;
@@ -504,6 +538,12 @@ function handleEvent(e: any) {
       break;
     }
     case "dmg":
+      // Taking it: the other team just hit us, so the screen says so. Gated
+      // on the teams differing because self-inflicted burn and splash should
+      // not raise the same alarm as someone shooting at you.
+      if (e.v === mySlot && e.a !== mySlot && roster[e.a]?.team !== roster[mySlot]?.team) {
+        hud.damage(e.n);
+      }
       if (e.a === mySlot && e.v !== mySlot) {
         hud.hitmark(e.hs);
         audio.hitmarker(e.hs);
@@ -679,8 +719,14 @@ function pullX(): number {
 }
 
 function interpDelayMs(): number {
+  return interpWidth;
+}
+
+/** Ease the interpolation width toward what the current RTT asks for. */
+function stepInterpWidth(dt: number) {
   // Wide enough to cover jitter, narrow enough that a peek is not a surprise.
-  return Math.min(200, Math.max(80, 80 + net.rtt * 0.25));
+  const want = Math.min(200, Math.max(80, 80 + net.rtt * 0.25));
+  interpWidth += (want - interpWidth) * Math.min(1, dt * 2);
 }
 
 function cameraEye(): [number, number, number] {
@@ -690,6 +736,17 @@ function cameraEye(): [number, number, number] {
   return [p[0] + smoothing[0], p[1] + eye + smoothing[1], p[2] + smoothing[2]];
 }
 
+/**
+ * Forget the killcam camera. `keepLastEye` holds on to where the view was, so
+ * the next cut can glide out of it rather than start from nowhere.
+ */
+function clearSpectatorCam(keepLastEye = false) {
+  specFrom = -1;
+  specOffset = [0, 0, 0];
+  specCrouch = 0;
+  if (!keepLastEye) lastViewEye = null;
+}
+
 /** The player we are spectating, from the latest snapshot. */
 function spectatedPlayer() {
   if (!isDead || spectating === 255) return undefined;
@@ -697,33 +754,101 @@ function spectatedPlayer() {
 }
 
 /**
+ * The two snapshots bracketing `renderTime`, and how far between them we are.
+ * One window per frame, shared by every body and by the killcam camera.
+ */
+function interpWindow(): { older: Snapshot; newer: Snapshot | null; t: number } | null {
+  let older: Snapshot | null = null;
+  let newer: Snapshot | null = null;
+  for (let i = snapshots.length - 1; i >= 0; i--) {
+    if (snapshots[i].received <= renderTime) {
+      older = snapshots[i];
+      newer = snapshots[i + 1] ?? null;
+      break;
+    }
+  }
+  if (!older) older = snapshots[0] ?? null;
+  if (!older) return null;
+  const span = newer ? newer.received - older.received : 0;
+  const t = span > 0 ? Math.min(1, Math.max(0, (renderTime - older.received) / span)) : 0;
+  return { older, newer, t };
+}
+
+/**
+ * The spectated player as the world is actually being drawn — position and
+ * aim sampled on the render timeline, not read off the newest snapshot.
+ *
+ * This is the whole killcam jitter fix. Every other body is drawn
+ * `interpDelayMs()` in the past and interpolated between two snapshots, so it
+ * moves smoothly. A camera fed from `latest` sits at a different instant and
+ * advances in 31 ms steps, so the smooth world slid under a stepping view and
+ * every step read as a shake. Both now share `renderTime`.
+ */
+function spectatedView(): SnapPlayer | undefined {
+  const target = spectatedPlayer();
+  if (!target) return undefined;
+  const w = interpWindow();
+  if (!w) return target;
+  const a = w.older.players.find((p) => p.slot === target.slot);
+  if (!a) return target;
+  const b = w.newer?.players.find((p) => p.slot === target.slot);
+  if (!b) return a;
+  return {
+    ...a,
+    x: a.x + (b.x - a.x) * w.t,
+    y: a.y + (b.y - a.y) * w.t,
+    z: a.z + (b.z - a.z) * w.t,
+    yaw: lerpAngle(a.yaw, b.yaw, w.t),
+    pitch: a.pitch + (b.pitch - a.pitch) * w.t,
+  };
+}
+
+/**
  * Where the camera goes this frame. Alive, that is our own eye. Dead, it is
  * the eye of whoever killed us — and if they die too, of whoever killed them,
- * because the server walks that chain and tells us where to look. The
- * position is eased rather than snapped so the cut is readable.
+ * because the server walks that chain and tells us where to look.
+ *
+ * The interpolated position is used as-is: easing toward it would only put
+ * the camera back behind the world it is watching. What is eased is the cut
+ * between two people, carried as an offset that decays to nothing, and the
+ * crouch dip.
  */
-function viewEye(dt: number): [number, number, number] {
-  const target = spectatedPlayer();
+function viewEye(dt: number, target: SnapPlayer | undefined): [number, number, number] {
   if (!target) {
-    specEye = null;
-    return cameraEye();
+    specFrom = -1;
+    specOffset = [0, 0, 0];
+    specCrouch = 0;
+    lastViewEye = cameraEye();
+    return lastViewEye;
   }
-  const want: [number, number, number] = [
-    target.x,
-    target.y + (target.crouching ? CROUCH_EYE : EYE_HEIGHT),
-    target.z,
-  ];
-  if (!specEye) {
-    specEye = want;
-  } else {
-    const k = Math.min(1, dt * 12);
-    specEye = [
-      specEye[0] + (want[0] - specEye[0]) * k,
-      specEye[1] + (want[1] - specEye[1]) * k,
-      specEye[2] + (want[2] - specEye[2]) * k,
+
+  if (specFrom !== target.slot) {
+    // New eyes. Snap the crouch to theirs, and turn the jump into an offset.
+    specCrouch = target.crouching ? 1 : 0;
+    const base: [number, number, number] = [
+      target.x,
+      target.y + (EYE_HEIGHT + (CROUCH_EYE - EYE_HEIGHT) * specCrouch),
+      target.z,
     ];
+    specOffset = lastViewEye
+      ? [lastViewEye[0] - base[0], lastViewEye[1] - base[1], lastViewEye[2] - base[2]]
+      : [0, 0, 0];
+    // Across the map a glide would fly through walls; that is a cut, not a move.
+    if (Math.hypot(specOffset[0], specOffset[1], specOffset[2]) > 6) specOffset = [0, 0, 0];
+    specFrom = target.slot;
+  } else {
+    specCrouch += ((target.crouching ? 1 : 0) - specCrouch) * Math.min(1, dt * 16);
+    const decay = Math.max(0, 1 - dt * 10);
+    specOffset = [specOffset[0] * decay, specOffset[1] * decay, specOffset[2] * decay];
   }
-  return specEye;
+
+  const eye = EYE_HEIGHT + (CROUCH_EYE - EYE_HEIGHT) * specCrouch;
+  lastViewEye = [
+    target.x + specOffset[0],
+    target.y + eye + specOffset[1],
+    target.z + specOffset[2],
+  ];
+  return lastViewEye;
 }
 
 // -------------------------------------------------------------------- loop
@@ -734,6 +859,8 @@ function frame(now: number) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
   fps = fps * 0.9 + (1 / Math.max(dt, 0.0001)) * 0.1;
+  stepInterpWidth(dt);
+  renderTime = now - interpDelayMs();
 
   if (phase === "queued") {
     // The waiting clock: proof the client is alive while the queue fills.
@@ -777,11 +904,11 @@ function frame(now: number) {
     }
     // Standby still honours the killcam: stepping away while dead should not
     // silently snap the view back to your own corpse.
-    const away = spectatedPlayer();
+    const away = spectatedView();
     renderer.hideViewmodel = away !== undefined;
     renderer.update(
       dt,
-      viewEye(dt),
+      viewEye(dt, away),
       away ? away.yaw : input.yaw,
       away ? away.pitch : input.pitch,
       0,
@@ -838,11 +965,11 @@ function frame(now: number) {
 
   const speed = sim ? Math.hypot(sim.vel[0], sim.vel[2]) : 0;
   // While dead, look through the killer's eyes with their aim, not ours.
-  const spec = spectatedPlayer();
+  const spec = spectatedView();
   renderer.hideViewmodel = spec !== undefined;
   renderer.update(
     dt,
-    viewEye(dt),
+    viewEye(dt, spec),
     spec ? spec.yaw : input.yaw,
     spec ? spec.pitch : input.pitch,
     spec ? 0 : adsAmount,
@@ -873,21 +1000,9 @@ function stepLocal() {
 
 /** Draw other players 100-200 ms in the past, between two real snapshots. */
 function renderPlayers() {
-  const renderTime = performance.now() - interpDelayMs();
-  let older: Snapshot | null = null;
-  let newer: Snapshot | null = null;
-  for (let i = snapshots.length - 1; i >= 0; i--) {
-    if (snapshots[i].received <= renderTime) {
-      older = snapshots[i];
-      newer = snapshots[i + 1] ?? null;
-      break;
-    }
-  }
-  if (!older) older = snapshots[0] ?? null;
-  if (!older) return;
-
-  const span = newer ? newer.received - older.received : 0;
-  const t = span > 0 ? Math.min(1, Math.max(0, (renderTime - older.received) / span)) : 0;
+  const w = interpWindow();
+  if (!w) return;
+  const { older, newer, t } = w;
 
   // Resolve the spectated slot once, through the same guarded lookup the
   // camera uses. Reading the raw `spectating` here would hide a live player

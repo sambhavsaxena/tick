@@ -110,6 +110,25 @@ html, body {
   border-radius: 50%;
 }
 
+/* Taking a hit. The edges of the screen go red and beat a couple of times,
+   loud enough to notice from the corner of the eye while you are looking at
+   the crosshair, and clear of the middle of the screen so it never hides the
+   person who is shooting you. Opacity is driven frame by frame from
+   `Hud.tick`, not by a CSS animation, because hits stack: a second hit has to
+   restart the beat and add to the level rather than fight a running keyframe. */
+#damageVignette {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  will-change: opacity;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 45, 85, 0) 34%,
+    rgba(255, 45, 85, 0.22) 70%,
+    rgba(196, 8, 32, 0.72) 100%
+  );
+}
+
 #scorebar {
   position: fixed;
   top: 0; left: 50%;

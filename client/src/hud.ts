@@ -17,10 +17,15 @@ const el = <T extends HTMLElement>(id: string): T => {
 
 export class Hud {
   private hitmarkerTimer = 0;
+  /** How hard the damage vignette is showing, 0 to 1, decayed in `tick`. */
+  private damageLevel = 0;
+  /** Where the pulse is in its beat, restarted by every fresh hit. */
+  private damagePhase = 0;
 
   readonly root = el("hud");
   private crosshair = el("crosshair");
   private hitmarker = el("hitmarker");
+  private damageVignette = el("damageVignette");
   private scoreA = el("scoreA");
   private scoreB = el("scoreB");
   private clock = el("clock");
@@ -136,6 +141,26 @@ export class Hud {
     window.setTimeout(() => span.remove(), 750);
   }
 
+  /**
+   * Someone on the other team hit us: pulse the edges of the screen red.
+   *
+   * The level is what decays and the beat rides on top of it, so a burst of
+   * small hits reads as one sustained warning rather than as a stutter, and a
+   * single big hit is loud immediately. Amount scales it — a chip of splash
+   * damage should not look like a sniper round.
+   */
+  damage(amount: number) {
+    this.damageLevel = Math.min(1, this.damageLevel + 0.3 + amount / 70);
+    this.damagePhase = 0;
+  }
+
+  /** Drop the vignette outright: respawned, or a new match. */
+  clearDamage() {
+    this.damageLevel = 0;
+    this.damagePhase = 0;
+    this.damageVignette.style.opacity = "0";
+  }
+
   hitmark(headshot: boolean) {
     this.hitmarker.classList.add("on");
     this.hitmarker.classList.toggle("head", headshot);
@@ -146,6 +171,15 @@ export class Hud {
     if (this.hitmarkerTimer > 0) {
       this.hitmarkerTimer -= dt;
       if (this.hitmarkerTimer <= 0) this.hitmarker.classList.remove("on");
+    }
+    if (this.damageLevel > 0) {
+      this.damageLevel = Math.max(0, this.damageLevel - dt * 0.85);
+      this.damagePhase += dt * 11;
+      // Never fully dark between beats: the warning should stay legible for
+      // the whole time it is up, and only the peaks should pulse.
+      const beat = 0.6 + 0.4 * Math.cos(this.damagePhase);
+      this.damageVignette.style.opacity = String(this.damageLevel * beat);
+      if (this.damageLevel === 0) this.damageVignette.style.opacity = "0";
     }
   }
 
